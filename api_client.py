@@ -360,32 +360,32 @@ class ArchiveAPIClient:
     # ==================== 数据标准化 ====================
 
     @staticmethod
-    def _normalize_wayback_record(record: Dict) -> Dict[str, Any]:
-        timestamp = record.get("timestamp", "")
-        mime = record.get("mimetype", "") or "unknown"
-        file_type = mime.split(";")[0].strip()
+    def _fmt_timestamp(raw: str) -> str:
+        """将 YYYYMMDDHHMMSS 格式化为 YYYY-MM-DD"""
+        if len(raw) >= 8:
+            d = raw[:8]
+            return f"{d[0:4]}-{d[4:6]}-{d[6:8]}"
+        return raw
 
+    @staticmethod
+    def _normalize_wayback_record(record: Dict) -> Dict[str, Any]:
         return {
             "url": record.get("original", ""),
             "status_code": record.get("statuscode", "") or "0",
             "length": record.get("length", "") or "0",
-            "file_type": file_type if file_type else "unknown",
-            "timestamp": timestamp[:8] if len(timestamp) >= 8 else timestamp,
+            "file_type": (record.get("mimetype", "") or "unknown").split(";")[0].strip(),
+            "timestamp": ArchiveAPIClient._fmt_timestamp(record.get("timestamp", "")),
             "source": "wayback",
         }
 
     @staticmethod
     def _normalize_cc_record(record: Dict) -> Dict[str, Any]:
-        timestamp = record.get("timestamp", "")
-        mime = record.get("mime", "") or "unknown"
-        file_type = mime.split(";")[0].strip()
-
         return {
             "url": record.get("url", ""),
             "status_code": record.get("status", "") or "0",
             "length": record.get("length", "") or "0",
-            "file_type": file_type if file_type else "unknown",
-            "timestamp": timestamp[:8] if len(timestamp) >= 8 else timestamp,
+            "file_type": (record.get("mime", "") or "unknown").split(";")[0].strip(),
+            "timestamp": ArchiveAPIClient._fmt_timestamp(record.get("timestamp", "")),
             "source": "commoncrawl",
         }
 
