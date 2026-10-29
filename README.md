@@ -7,6 +7,7 @@
 ### 数据源
 - **Wayback Machine CDX API** — 查询 `web.archive.org` 存档的目标域名历史快照
 - **Common Crawl Index API** — 查询 `index.commoncrawl.org` 按月索引的网页爬取记录
+- 页数通过 `showNumPages` 查询；`pageSize` 表示压缩索引块数，不是 URL 条数。每个索引最多读取 5 页，超出时标记为部分结果。
 
 ### 查询能力
 - 支持泛域名查询（`*.example.com` 匹配所有子域）
@@ -45,30 +46,19 @@
 - 复制功能：`Ctrl+C` 复制选中行 URL，右键菜单支持「复制 URL」和「复制整行数据」
 - 自定义可滚动下拉组件（`ScrollableComboBox`），解决 CTkComboBox 下拉列表无法滚动的问题
 
-## 本次界面变更说明
+## 体验与查询说明
 
-本次更新仅涉及界面美化和桌面尺寸适配，未修改查询、代理、筛选、排序、分页、复制、导出及 API 请求等业务逻辑。
-
-| 变更区域 | 变更内容 | 功能影响 |
-|----------|----------|----------|
-| 主窗口 | 按屏幕比例计算尺寸、动态设置最小尺寸并居中 | 无 |
-| 标题区 | 新增 `Archive Recon` 品牌标题和用途说明 | 无 |
-| 查询区 | 改为卡片式双行布局，统一输入框与按钮样式 | 无 |
-| 状态区 | 调整状态文字、进度条及查询按钮的层级和间距 | 无 |
-| 筛选区 | 单行堆叠改为响应式网格，并单独设置操作行 | 无 |
-| 结果表格 | 统一表头、行高、选中状态及浅色/深色配色 | 无 |
-| 分页区 | 使用统一卡片边框和留白 | 无 |
-| 视觉主题 | 集中定义页面、文字、边框、主色、成功色和警示色 | 无 |
-
-### 验证结果
-
-- `main.py` 与 `api_client.py` 已通过 Python 语法编译检查。
-- 已使用项目虚拟环境完成 `ArchiveSearchApp` 窗口实例化与销毁测试。
-- 本次未调整 `api_client.py`，也未改变任何网络请求或结果处理流程。
+- 常用筛选项保持在工具栏中，域名筛选等较少使用的选项收纳在「高级筛选」中；敏感路径可一键筛出。
+- 查询前会检查域名格式；无结果、筛选无匹配、索引失败和部分结果都有对应提示。
+- Common Crawl 使用服务端 `showNumPages` 元数据确定分页。`pageSize` 代表压缩索引块数，并非 URL 条数；每个索引最多读取 5 页，超过上限会标记为部分结果。
+- Common Crawl 请求按索引串行执行，分页请求之间至少等待 1 秒，以降低连续请求压力。
+- CSV / JSON 导出的是当前筛选条件匹配的全部记录，不限于表格当前页。
+- Windows 启动脚本使用程序目录下的 `.venv`（存在时），并在启动前检查 Tkinter 和项目依赖；不再依赖原开发机上的固定路径。
 
 ## 环境要求
 
 - Python 3.10+
+- Windows：Python 安装需包含 Tcl/Tk（`tkinter`）；精简或嵌入式 Python 环境通常不带此组件。
 - Windows / macOS / Linux（需支持 GUI 显示）
 
 ## 安装
@@ -79,15 +69,13 @@ git clone https://github.com/Lysander-9/pentest-archive-tool.git
 cd pentest-archive-tool
 
 # 创建虚拟环境（推荐）
-python -m venv venv
+uv venv .venv
 
-# Windows
-venv\Scripts\activate
-# macOS / Linux
-source venv/bin/activate
+# Windows：使用包含 Tcl/Tk 的 Python 3.10+
+uv pip install --python .venv\Scripts\python.exe -r requirements.txt
 
-# 安装依赖
-pip install -r requirements.txt
+# macOS / Linux：将路径替换为 .venv/bin/python
+# uv pip install --python .venv/bin/python -r requirements.txt
 ```
 
 ## 使用方法
@@ -95,15 +83,15 @@ pip install -r requirements.txt
 ### 启动
 
 ```bash
-python main.py
+.venv\Scripts\python.exe main.py
 ```
 
-Windows 用户也可双击 `启动工具.bat` 启动（需修改其中的 Python 路径）。
+Windows 用户也可双击 `start.bat` 启动。脚本优先使用项目 `.venv`，并在启动前检查 Tkinter 和所需依赖。
 
 ### 基本操作
 
 1. 在顶部输入「目标域名」（如 `example.com` 或 `*.example.com`）
-2. 如需代理，在「代理」栏填入代理地址并点击「应用代理」
+2. 如需代理，展开「网络设置」，填入代理地址并点击「应用代理」
 3. 点击 **Wayback 查询** 或 **Common Crawl 查询** 开始检索
 4. 结果加载完成后，使用工具栏筛选、排序、搜索
 5. 可导出为 CSV 或 JSON 文件

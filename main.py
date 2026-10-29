@@ -4,6 +4,7 @@ GUI 主程序
 """
 
 import threading
+from urllib.parse import urlsplit
 import csv
 import json
 import re
@@ -255,6 +256,7 @@ class ResultsTable(ctk.CTkFrame):
         self.sort_column = None
         self.sort_reverse = False
         self.current_font_size = 11
+        self.empty_message = "输入目标域名并开始查询\n结果会显示在这里"
 
         self._build_ui()
 
@@ -311,17 +313,18 @@ class ResultsTable(ctk.CTkFrame):
         )
         self.filter_url.grid(row=0, column=5, sticky="ew", padx=(0, 14))
 
-        ctk.CTkLabel(filter_row, text="域名", text_color=COLORS["muted"], font=label_font).grid(
-            row=0, column=6, sticky="w", padx=(0, 6)
-        )
+        self.filter_advanced = ctk.CTkFrame(self.toolbar, fg_color="transparent")
+        self.filter_advanced.grid(row=1, column=0, sticky="ew", padx=10, pady=(0, 6))
+        ctk.CTkLabel(self.filter_advanced, text="域名筛选", text_color=COLORS["muted"], font=label_font).pack(side="left", padx=(0, 8))
         self.filter_domain = ScrollableComboBox(
-            filter_row, width=180, values=["（查询后自动填充）"],
+            self.filter_advanced, width=220, values=["（查询后自动填充）"],
         )
         self.filter_domain.set("")
-        self.filter_domain.grid(row=0, column=7, sticky="ew")
+        self.filter_domain.pack(side="left", fill="x", expand=True)
+        self.filter_advanced.grid_remove()
 
         action_row = ctk.CTkFrame(self.toolbar, fg_color="transparent")
-        action_row.grid(row=1, column=0, sticky="ew", padx=10, pady=(0, 10))
+        action_row.grid(row=2, column=0, sticky="ew", padx=10, pady=(0, 10))
 
         ctk.CTkLabel(action_row, text="表格字号", text_color=COLORS["muted"], font=label_font).pack(
             side="left", padx=(0, 6)
@@ -351,11 +354,29 @@ class ResultsTable(ctk.CTkFrame):
         )
         self.btn_clear.pack(side="left")
 
+        self.btn_advanced = ctk.CTkButton(
+            action_row, text="高级筛选  +", width=112, height=34,
+            fg_color=COLORS["surface_alt"], hover_color=COLORS["border"],
+            border_width=1, border_color=COLORS["border"], text_color=COLORS["text"],
+            command=self._toggle_advanced_filters,
+        )
+        self.btn_advanced.pack(side="left", padx=(8, 0))
+        self.interesting_only = ctk.BooleanVar(value=False)
+        self.chk_interesting = ctk.CTkCheckBox(
+            action_row, text="敏感路径模式", variable=self.interesting_only,
+            text_color=COLORS["muted"], command=self._apply_filters,
+        )
+        self.chk_interesting.pack(side="left", padx=(12, 4))
+
         self.lbl_stats = ctk.CTkLabel(
-            action_row, text="共 0 条结果", text_color=COLORS["muted"],
+            action_row, text="0 条结果", text_color=COLORS["muted"],
             font=ctk.CTkFont(family=FONT_FAMILY, size=12),
         )
         self.lbl_stats.pack(side="right", padx=4)
+        ctk.CTkLabel(
+            self.toolbar, text="导出包含全部筛选匹配结果（不限当前页）",
+            text_color=COLORS["muted"], font=ctk.CTkFont(family=FONT_FAMILY, size=11),
+        ).grid(row=3, column=0, sticky="e", padx=14, pady=(0, 8))
 
         # --- Treeview 表格 ---
         self.tree_frame = ctk.CTkFrame(
@@ -396,6 +417,12 @@ class ResultsTable(ctk.CTkFrame):
         self.tree.column("length", anchor="e")
 
         self.tree.pack(fill="both", expand=True)
+        self.empty_state = ctk.CTkLabel(
+            self.tree_frame, text="输入目标域名并开始查询\n结果会显示在这里",
+            text_color=COLORS["muted"], justify="center",
+            font=ctk.CTkFont(family=FONT_FAMILY, size=15),
+        )
+        self.empty_state.place(relx=0.5, rely=0.47, anchor="center")
 
         # 敏感文件高亮标签
         self.tree.tag_configure("interesting", background="#FFF0BA", foreground="#5A4300")
@@ -483,6 +510,12 @@ class ResultsTable(ctk.CTkFrame):
         self._update_domain_dropdown()
         self._refresh_view()
 
+    def set_empty_message(self, message: str):
+        self.empty_message = message
+        if not self.filtered_results:
+            self.empty_state.configure(text=message)
+            self.empty_state.place(relx=0.5, rely=0.47, anchor="center")
+
     def append_results(self, results: list):
         """追加结果（用于懒加载）"""
         # 去重
@@ -567,6 +600,8 @@ class ResultsTable(ctk.CTkFrame):
                     if self._match_domain_patterns(r.get("url", ""), include_domains, exclude_domains)
                 ]
 
+        if self.interesting_only.get():
+            filtered = [r for r in filtered if is_interesting_url(r.get("url", ""))]
         self.filtered_results = filtered
         self.current_page = 0
         self._refresh_view()
@@ -577,9 +612,18 @@ class ResultsTable(ctk.CTkFrame):
         self.filter_mime.set("")
         self.filter_url.delete(0, "end")
         self.filter_domain.set("")
+        self.interesting_only.set(False)
         self.filtered_results = self.all_results
         self.current_page = 0
         self._refresh_view()
+
+    def _toggle_advanced_filters(self):
+        if self.filter_advanced.winfo_ismapped():
+            self.filter_advanced.grid_remove()
+            self.btn_advanced.configure(text="高级筛选  +")
+        else:
+            self.filter_advanced.grid()
+            self.btn_advanced.configure(text="高级筛选  −")
 
     def _update_domain_dropdown(self):
         """从当前全量结果中提取域名并统计数量，更新下拉框。保留当前选中值。"""
@@ -851,6 +895,15 @@ class ResultsTable(ctk.CTkFrame):
         start = self.current_page * self.page_size
         end = start + self.page_size
         page_data = self.filtered_results[start:end]
+        if page_data:
+            self.empty_state.place_forget()
+        else:
+            if self.all_results:
+                empty_text = "没有符合条件的结果\n清除筛选或调整关键词后重试"
+            else:
+                empty_text = self.empty_message
+            self.empty_state.configure(text=empty_text)
+            self.empty_state.place(relx=0.5, rely=0.47, anchor="center")
 
         # 数据列 key（去掉 # 列）
         data_keys = [c[0] for c in self.COLUMNS if c[0] != "#"]
@@ -866,7 +919,10 @@ class ResultsTable(ctk.CTkFrame):
         total = len(self.filtered_results)
         total_pages = max(1, (total - 1) // self.page_size + 1) if total > 0 else 1
 
-        self.lbl_stats.configure(text=f"共 {total} 条结果（总计 {len(self.all_results)} 条）")
+        if len(self.filtered_results) == len(self.all_results):
+            self.lbl_stats.configure(text=f"共 {total:,} 条结果")
+        else:
+            self.lbl_stats.configure(text=f"匹配 {total:,} / 共 {len(self.all_results):,} 条")
         self.lbl_page.configure(text=f"第 {self.current_page + 1} 页")
         self.lbl_total_pages.configure(text=f"/ 共 {total_pages} 页")
 
@@ -1034,7 +1090,11 @@ class ArchiveSearchApp(ctk.CTk):
         self.cc_querying = False
         self.cc_current_page = 0
         self.cc_index_ids = []
-        self.cc_page_size = 50
+        self.cc_page_size = 5  # Common Crawl pageSize counts compressed index blocks, not URL rows.
+        self.cc_failed_indexes: list[tuple[str, str]] = []
+        self.cc_succeeded_indexes: list[str] = []
+        self.cc_truncated_indexes: list[str] = []
+        self._active_query_id = 0
 
         self._build_ui()
         self._apply_proxy()  # 自动应用默认代理
@@ -1085,26 +1145,26 @@ class ArchiveSearchApp(ctk.CTk):
         )
         self.entry_domain.grid(row=0, column=1, sticky="ew", padx=(0, 18), pady=(14, 8))
 
-        ctk.CTkLabel(
-            self.top_bar, text="网络代理", text_color=COLORS["muted"], font=field_label_font,
-        ).grid(row=0, column=2, sticky="w", padx=(0, 8), pady=(14, 8))
-        self.entry_proxy = ctk.CTkEntry(
-            self.top_bar, height=38, placeholder_text="留空则直连",
-            fg_color=COLORS["surface_alt"], border_color=COLORS["border"],
-        )
-        self.entry_proxy.insert(0, "http://127.0.0.1:7890")
-        self.entry_proxy.grid(row=0, column=3, sticky="ew", padx=(0, 8), pady=(14, 8))
-
-        self.btn_apply_proxy = ctk.CTkButton(
-            self.top_bar, text="应用代理", width=92, height=38,
+        self.network_toggle = ctk.CTkButton(
+            self.top_bar, text="网络设置  +", width=112, height=36,
             fg_color=COLORS["surface_alt"], hover_color=COLORS["border"],
             border_width=1, border_color=COLORS["border"], text_color=COLORS["text"],
-            command=self._apply_proxy,
+            command=self._toggle_network_settings,
         )
-        self.btn_apply_proxy.grid(row=0, column=4, padx=(0, 16), pady=(14, 8))
+        self.network_toggle.grid(row=0, column=2, columnspan=3, sticky="e", padx=16, pady=(14, 8))
+
+        self.network_settings = ctk.CTkFrame(self.top_bar, fg_color=COLORS["surface_alt"], corner_radius=10)
+        ctk.CTkLabel(self.network_settings, text="代理地址", text_color=COLORS["muted"], font=field_label_font).pack(side="left", padx=(12, 8), pady=10)
+        self.entry_proxy = ctk.CTkEntry(self.network_settings, height=34, placeholder_text="留空则直连", fg_color=COLORS["surface"], border_color=COLORS["border"], width=300)
+        self.entry_proxy.insert(0, "http://127.0.0.1:7890")
+        self.entry_proxy.pack(side="left", padx=(0, 8), pady=8)
+        self.btn_apply_proxy = ctk.CTkButton(self.network_settings, text="应用代理", width=92, height=34, fg_color=COLORS["primary"], hover_color=COLORS["primary_hover"], command=self._apply_proxy)
+        self.btn_apply_proxy.pack(side="left", padx=(0, 12), pady=8)
+        self.network_settings.grid(row=1, column=0, columnspan=5, sticky="e", padx=12, pady=(0, 4))
+        self.network_settings.grid_remove()
 
         status_row = ctk.CTkFrame(self.top_bar, fg_color="transparent")
-        status_row.grid(row=1, column=0, columnspan=5, sticky="ew", padx=16, pady=(2, 14))
+        status_row.grid(row=2, column=0, columnspan=5, sticky="ew", padx=16, pady=(2, 14))
 
         self.lbl_status = ctk.CTkLabel(
             status_row, text="就绪", text_color=COLORS["muted"],
@@ -1190,11 +1250,19 @@ class ArchiveSearchApp(ctk.CTk):
 
     # ==================== 代理 ====================
 
+    def _toggle_network_settings(self):
+        if self.network_settings.winfo_ismapped():
+            self.network_settings.grid_remove()
+            self.network_toggle.configure(text="网络设置  +")
+        else:
+            self.network_settings.grid()
+            self.network_toggle.configure(text="网络设置  −")
+
     def _apply_proxy(self):
         proxy = self.entry_proxy.get().strip()
         if proxy:
             self.client.set_proxy(proxy)
-            self.lbl_status.configure(text=f"代理已设置: {proxy}", text_color="green")
+            self.lbl_status.configure(text="代理已应用（连通性尚未验证）", text_color=COLORS["muted"])
         else:
             self.client.set_proxy(None)
             self.lbl_status.configure(text="代理已清除", text_color="gray")
@@ -1203,6 +1271,7 @@ class ArchiveSearchApp(ctk.CTk):
 
     def _query_starting(self):
         """进入查询状态"""
+        self._active_query_id += 1
         self._stop_event.clear()
         self.btn_wb_query.configure(state="disabled")
         self.btn_cc_query.configure(state="disabled")
@@ -1211,9 +1280,11 @@ class ArchiveSearchApp(ctk.CTk):
     def _query_done(self):
         """退出查询状态"""
         self.btn_stop.pack_forget()  # 隐藏停止按钮
+        self.btn_stop.configure(state="normal", text="停止")
         self.btn_wb_query.configure(state="normal")
         self.btn_cc_query.configure(state="normal")
         self.progress.stop()
+        self.progress.configure(mode="determinate")
         self.progress.set(0)
 
     def _stop_query(self):
@@ -1227,16 +1298,16 @@ class ArchiveSearchApp(ctk.CTk):
     def _start_wayback_query(self):
         """开始 Wayback Machine 查询"""
         domain = self.entry_domain.get().strip()
-        if not domain:
-            messagebox.showwarning("输入错误", "请输入目标域名")
+        domain, error = self._normalize_domain(domain)
+        if error:
+            self.lbl_status.configure(text=error, text_color=COLORS["danger"])
             return
-
-        domain = domain.replace("https://", "").replace("http://", "").rstrip("/")
 
         self._query_starting()
         self.wayback_table.set_results([])  # 清空旧结果
+        self.wayback_table.set_empty_message("正在读取 Wayback 存档…")
         self.tabview.set("Wayback Machine")
-        self.lbl_status.configure(text="正在查询 Wayback Machine (第 1 页)...", text_color="#1565c0")
+        self.lbl_status.configure(text="Wayback Machine：每次最多读取 20 页（约 1,000 条）；更多存档可能未显示。", text_color=COLORS["primary"])
 
         self._query_thread = threading.Thread(
             target=self._do_wayback_query, args=(domain,), daemon=True
@@ -1247,6 +1318,7 @@ class ArchiveSearchApp(ctk.CTk):
         """后台线程：逐页查询并实时推送结果"""
         import time as _time
         total = 0
+        reached_limit_with_more = False
         stop = self._stop_event
         client = self.client
 
@@ -1277,6 +1349,8 @@ class ArchiveSearchApp(ctk.CTk):
                 batch = result.get("results", [])
                 if not batch:
                     break
+                if page == 19 and result.get("has_more", False):
+                    reached_limit_with_more = True
 
                 # 实时推送到主线程
                 self.after(0, lambda b=batch, p=page, t=len(batch): self._on_wayback_batch(b, p, t))
@@ -1290,7 +1364,7 @@ class ArchiveSearchApp(ctk.CTk):
                     _time.sleep(0.4)
 
             if not stop.is_set():
-                self.after(0, lambda: self._on_wayback_done(total, domain))
+                self.after(0, lambda: self._on_wayback_done(total, domain, reached_limit_with_more))
 
         except Exception as e:
             if not stop.is_set():
@@ -1309,14 +1383,22 @@ class ArchiveSearchApp(ctk.CTk):
             text=f"Wayback Machine: 已获取 {total} 条 (第 {page + 1} 页)", text_color="#1565c0"
         )
 
-    def _on_wayback_done(self, total: int, domain: str):
+    def _on_wayback_done(self, total: int, domain: str, reached_limit_with_more: bool = False):
         """Wayback 查询完成"""
         self._query_done()
         self.wayback_table.current_page = 0
         self.wayback_table._refresh_view()
-        self.lbl_status.configure(
-            text=f"Wayback Machine 完成: {total} 条结果", text_color="green"
-        )
+        if reached_limit_with_more:
+            self.lbl_status.configure(
+                text=f"Wayback Machine 部分完成：已读满 20 页 / {total} 条，可能仍有更多存档。",
+                text_color="#B7791F",
+            )
+        else:
+            self.lbl_status.configure(
+                text=f"Wayback Machine 完成: {total} 条结果", text_color=COLORS["success"]
+            )
+        if total == 0:
+            self.wayback_table.set_empty_message("查询完成，没有找到存档记录")
 
     def _on_query_error(self, error_msg: str):
         """查询出错"""
@@ -1339,36 +1421,99 @@ class ArchiveSearchApp(ctk.CTk):
     def _start_cc_query(self):
         """开始 Common Crawl 查询"""
         domain = self.entry_domain.get().strip()
-        if not domain:
-            messagebox.showwarning("输入错误", "请输入目标域名")
-            return
-
-        domain = domain.replace("https://", "").replace("http://", "").rstrip("/")
-
-        try:
-            params = self.cc_time_selector.get_query_params()
-            index_ids = self.client.get_indexes_for_period(**params)
-        except APIError as e:
-            messagebox.showerror("获取索引失败", str(e))
-            return
-
-        if not index_ids:
-            messagebox.showinfo("无匹配索引", "所选时间范围内没有可用的 Common Crawl 索引")
+        domain, error = self._normalize_domain(domain)
+        if error:
+            self.lbl_status.configure(text=error, text_color=COLORS["danger"])
             return
 
         self._query_starting()
-        self.cc_index_ids = index_ids
+        self.cc_index_ids = []
         self.cc_current_page = 0
+        self.cc_failed_indexes = []
+        self.cc_succeeded_indexes = []
+        self.cc_truncated_indexes = []
         self.cc_table.set_results([])
+        self.cc_table.set_empty_message("正在获取 Common Crawl 索引列表…")
         self.tabview.set("Common Crawl")
+        self.lbl_status.configure(text="正在获取 Common Crawl 索引列表…", text_color=COLORS["primary"])
+        self.lbl_cc_indexes.configure(text="正在获取可用索引…")
+        params = self.cc_time_selector.get_query_params()
+        query_id = self._active_query_id
+        threading.Thread(target=self._prepare_cc_query, args=(query_id, domain, params), daemon=True).start()
 
-        self.lbl_cc_indexes.configure(
-            text=f"待查询索引: {len(index_ids)} 个 ({', '.join(index_ids[:5])}{'...' if len(index_ids) > 5 else ''})"
-        )
+    @staticmethod
+    def _normalize_domain(value: str) -> tuple[str, str | None]:
+        """Return a normalized hostname or a user-facing validation message."""
+        value = value.strip()
+        if not value:
+            return "", "请输入目标域名后再开始查询。"
+        candidate = value if "://" in value else "https://" + value
+        parsed = urlsplit(candidate)
+        host = parsed.hostname or ""
+        if parsed.scheme not in ("http", "https") or not host:
+            return "", "域名格式无效，请输入 example.com 或 *.example.com。"
+        if parsed.path not in ("", "/") or parsed.query or parsed.fragment:
+            return "", "这里只接受域名，不接受路径、查询参数或片段。"
+        try:
+            port = parsed.port
+        except ValueError:
+            return "", "端口格式无效；查询目标请只填写域名。"
+        if port:
+            return "", "请移除端口号，只输入域名，例如 example.com。"
+        wildcard = value.startswith("*.") or value.startswith("http://*.") or value.startswith("https://*.")
+        if wildcard:
+            host = "*." + host.lstrip("*.")
+        try:
+            host.encode("idna")
+        except UnicodeError:
+            return "", "域名中包含无效字符，请检查后重试。"
+        if any(not label or len(label) > 63 or label.startswith("-") or label.endswith("-") for label in host.lstrip("*.").split(".")):
+            return "", "域名格式无效，请检查各级域名标签。"
+        return host.lower(), None
 
-        self._load_cc_page()
+    def _prepare_cc_query(self, query_id: int, domain: str, params: dict):
+        try:
+            index_ids = self.client.get_indexes_for_period(**params)
+        except APIError as error:
+            self.after(0, lambda q=query_id, e=str(error): self._on_cc_prepare_error(q, e))
+            return
+        except Exception as error:
+            self.after(0, lambda q=query_id, e=str(error): self._on_cc_prepare_error(q, e))
+            return
+        self.after(0, lambda q=query_id, d=domain, ids=index_ids: self._on_cc_indexes_ready(q, d, ids))
 
-    def _load_cc_page(self):
+    def _on_cc_prepare_error(self, query_id: int, error: str):
+        if query_id != self._active_query_id:
+            return
+        self._query_done()
+        if self._stop_event.is_set():
+            self.lbl_status.configure(text="已停止索引准备。", text_color=COLORS["muted"])
+            self.lbl_cc_indexes.configure(text="可以重新开始查询。")
+            self.cc_table.set_empty_message("查询已停止；尚未取得结果")
+        else:
+            self.lbl_status.configure(text=f"获取索引失败：{error[:120]}", text_color=COLORS["danger"])
+            self.lbl_cc_indexes.configure(text="索引列表获取失败；检查网络或代理后可重试。")
+            self.cc_table.set_empty_message("获取索引失败；检查网络或代理后可重试")
+
+    def _on_cc_indexes_ready(self, query_id: int, domain: str, index_ids: list[str]):
+        if query_id != self._active_query_id:
+            return
+        if self._stop_event.is_set():
+            self._query_done()
+            self.lbl_status.configure(text="已停止索引准备。", text_color=COLORS["muted"])
+            self.cc_table.set_empty_message("查询已停止；尚未取得结果")
+            return
+        if not index_ids:
+            self._query_done()
+            self.lbl_status.configure(text="所选时间范围内没有可用索引。", text_color=COLORS["muted"])
+            self.lbl_cc_indexes.configure(text="调整时间范围后可重新查询。")
+            self.cc_table.set_empty_message("所选时间范围内没有可用 Common Crawl 索引")
+            return
+        self.cc_index_ids = index_ids
+        self.lbl_cc_indexes.configure(text=f"查询范围：{len(index_ids)} 个索引；每个索引最多 5 页（每页最多 5 个压缩索引块）。")
+        self._load_cc_page(domain)
+
+    def _load_cc_page(self, domain: str | None = None):
         """加载 Common Crawl 当前索引"""
         if self.cc_querying:
             return
@@ -1396,47 +1541,90 @@ class ArchiveSearchApp(ctk.CTk):
         self.progress.configure(mode="indeterminate")
         self.progress.start()
 
-        domain = self.entry_domain.get().strip()
-        domain = domain.replace("https://", "").replace("http://", "").rstrip("/")
+        if domain is None:
+            domain, error = self._normalize_domain(self.entry_domain.get())
+            if error:
+                self._on_query_error(error)
+                return
 
         thread = threading.Thread(
-            target=self._do_cc_page_query, args=(idx_id, domain), daemon=True
+            target=self._do_cc_page_query, args=(idx_id, domain, self._active_query_id), daemon=True
         )
         thread.start()
 
-    def _do_cc_page_query(self, idx_id: str, domain: str):
+    def _do_cc_page_query(self, idx_id: str, domain: str, query_id: int):
         """后台查询单个 Common Crawl 索引"""
         try:
+            if self.cc_current_page > 0 and self._stop_event.wait(1.0):
+                self.after(0, lambda i=idx_id, q=query_id: self._on_cc_page_done(i, [], q, 0, 0))
+                return
+            total_pages = self.client.get_commoncrawl_page_count(
+                idx_id, domain, page_size=self.cc_page_size,
+            )
+            pages_to_fetch = min(total_pages, 5)
+            self.after(0, lambda i=idx_id, q=query_id, total=total_pages: self._on_cc_page_count(i, total, q))
             all_from_idx = []
-            for page_num in range(5):  # 每个索引最多 5 页（减少查询量）
+            pages_completed = 0
+            for page_num in range(pages_to_fetch):
                 if self._stop_event.is_set():
+                    break
+                if self._stop_event.wait(1.0):
                     break
                 try:
                     result = self.client.query_commoncrawl(
                         index_id=idx_id, domain=domain,
                         page=page_num, page_size=self.cc_page_size,
+                        total_pages=total_pages,
                     )
-                except APIError:
-                    break
+                except APIError as error:
+                    self.after(0, lambda i=idx_id, q=query_id, msg=str(error), rows=all_from_idx: self._on_cc_page_error(i, msg, q, rows))
+                    return
                 if not result["results"]:
+                    pages_completed += 1
                     break
                 all_from_idx.extend(result["results"])
+                pages_completed += 1
                 if not result["has_more"]:
                     break
 
-            self.after(0, lambda: self._on_cc_page_done(idx_id, all_from_idx))
+            self.after(0, lambda i=idx_id, rows=all_from_idx, q=query_id, total=total_pages, fetched=pages_completed: self._on_cc_page_done(i, rows, q, total, fetched))
         except Exception as e:
-            self.after(0, lambda: self._on_cc_page_error(idx_id, str(e)))
+            self.after(0, lambda i=idx_id, q=query_id, msg=str(e): self._on_cc_page_error(i, msg, q))
 
-    def _on_cc_page_done(self, idx_id: str, results: list):
+    def _on_cc_page_count(self, idx_id: str, total_pages: int, query_id: int):
+        if query_id != self._active_query_id:
+            return
+        self.lbl_status.configure(
+            text=f"Common Crawl [{idx_id}]：索引共 {total_pages} 页，将读取前 {min(total_pages, 5)} 页。",
+            text_color=COLORS["primary"],
+        )
+
+    def _on_cc_page_done(
+        self,
+        idx_id: str,
+        results: list,
+        query_id: int | None = None,
+        total_pages: int = 0,
+        pages_fetched: int = 0,
+    ):
         """单个索引查询完成"""
+        if query_id is not None and query_id != self._active_query_id:
+            return
         self.cc_querying = False
         self.progress.stop()
         self.progress.set(0)
         self.cc_current_page += 1
-
         self.cc_table.append_results(results)
         total = len(self.cc_table.all_results)
+        if self._stop_event.is_set():
+            self.lbl_status.configure(text=f"Common Crawl 已停止：保留 {total} 条已获取结果。", text_color=COLORS["muted"])
+            if total == 0:
+                self.cc_table.set_empty_message("查询已停止；尚未取得结果")
+            self._query_done()
+            return
+        self.cc_succeeded_indexes.append(idx_id)
+        if pages_fetched < total_pages and not self._stop_event.is_set():
+            self.cc_truncated_indexes.append(idx_id)
         self.lbl_status.configure(
             text=f"Common Crawl [{idx_id}]: +{len(results)} 条 | 总计: {total} 条",
             text_color="green",
@@ -1450,23 +1638,52 @@ class ArchiveSearchApp(ctk.CTk):
             )
             self._query_done()
         else:
-            self.lbl_status.configure(
-                text=f"Common Crawl 全部完成: {total} 条", text_color="green"
-            )
+            if self.cc_failed_indexes or self.cc_truncated_indexes:
+                reasons = []
+                if self.cc_failed_indexes:
+                    reasons.append(f"{len(self.cc_failed_indexes)} 个失败")
+                if self.cc_truncated_indexes:
+                    reasons.append(f"{len(self.cc_truncated_indexes)} 个达到 5 页上限")
+                self.lbl_status.configure(text=f"Common Crawl 部分完成：{total} 条；" + "，".join(reasons), text_color="#B7791F")
+                details = []
+                if self.cc_failed_indexes:
+                    details.append("失败索引：" + ", ".join(i for i, _ in self.cc_failed_indexes))
+                if self.cc_truncated_indexes:
+                    details.append("达到页数上限：" + ", ".join(self.cc_truncated_indexes))
+                self.lbl_cc_indexes.configure(text="；".join(details))
+            else:
+                self.lbl_status.configure(text=f"Common Crawl 完成：{total} 条，处理 {len(self.cc_succeeded_indexes)} 个索引", text_color=COLORS["success"])
+            if total == 0:
+                self.cc_table.set_empty_message("查询完成，没有找到存档记录")
             self._query_done()
 
-    def _on_cc_page_error(self, idx_id: str, error_msg: str):
+    def _on_cc_page_error(self, idx_id: str, error_msg: str, query_id: int | None = None, partial_results: list | None = None):
         """单个索引查询出错"""
+        if query_id is not None and query_id != self._active_query_id:
+            return
         self.cc_querying = False
         self.progress.stop()
         self.progress.set(0)
         self.cc_current_page += 1
+        self.cc_failed_indexes.append((idx_id, error_msg))
+        if partial_results:
+            self.cc_table.append_results(partial_results)
+        total = len(self.cc_table.all_results)
         self.lbl_status.configure(
-            text=f"Common Crawl [{idx_id}] 查询失败: {error_msg[:50]}", text_color="red"
+            text=f"索引 {idx_id} 失败，继续后续索引；已记录 {len(self.cc_failed_indexes)} 项失败。", text_color=COLORS["danger"]
         )
         if not self._stop_event.is_set() and self.cc_current_page < len(self.cc_index_ids):
             self._load_cc_page()
         else:
+            self.lbl_cc_indexes.configure(text="失败索引：" + ", ".join(i for i, _ in self.cc_failed_indexes))
+            if self._stop_event.is_set():
+                self.lbl_status.configure(text=f"Common Crawl 已停止：保留 {total} 条结果，{len(self.cc_failed_indexes)} 个索引失败。", text_color=COLORS["muted"])
+            elif total:
+                self.lbl_status.configure(text=f"Common Crawl 部分完成：{total} 条；{len(self.cc_failed_indexes)} 个索引失败。", text_color="#B7791F")
+                self.cc_table.set_empty_message("有部分索引失败，保留的记录仍可查看和导出")
+            else:
+                self.lbl_status.configure(text=f"Common Crawl 查询失败：{len(self.cc_failed_indexes)} 个索引失败。", text_color=COLORS["danger"])
+                self.cc_table.set_empty_message("查询失败；检查网络或代理后可重试")
             self._query_done()
 
     def _on_cc_scroll(self, event):

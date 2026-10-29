@@ -269,10 +269,15 @@ class ArchiveAPIClient:
         index_id: str,
         domain: str,
         page: int = 0,
-        page_size: int = 50,
+        page_size: int = 5,
         filters: Optional[List[str]] = None,
+        total_pages: Optional[int] = None,
     ) -> Dict[str, Any]:
         """查询 Common Crawl 指定索引"""
+        if total_pages is None:
+            total_pages = self.get_commoncrawl_page_count(
+                index_id, domain, page_size=page_size, filters=filters,
+            )
         if not domain.startswith("*"):
             domain = f"*.{domain.lstrip('.')}"
 
@@ -298,7 +303,9 @@ class ArchiveAPIClient:
                 return {
                     "results": [], "total_available": 0,
                     "page": page, "page_size": page_size,
-                    "has_more": False, "index_id": index_id,
+                    "total_pages": total_pages,
+                    "has_more": total_pages is not None and page + 1 < total_pages,
+                    "index_id": index_id,
                 }
 
             results = []
@@ -317,17 +324,45 @@ class ArchiveAPIClient:
                 "total_available": len(results),
                 "page": page,
                 "page_size": page_size,
-                "has_more": len(results) >= page_size,
+                "total_pages": total_pages,
+                "has_more": total_pages is not None and page + 1 < total_pages,
                 "index_id": index_id,
             }
         except requests.RequestException as e:
             raise APIError(f"Common Crawl query failed for {index_id}: {e}")
 
+    def get_commoncrawl_page_count(
+        self,
+        index_id: str,
+        domain: str,
+        page_size: int = 5,
+        filters: Optional[List[str]] = None,
+    ) -> int:
+        """Return available ZipNum pages; pageSize counts compressed blocks, not URL rows."""
+        if not domain.startswith("*"):
+            domain = f"*.{domain.lstrip('.')}"
+        params_list = [
+            ("url", domain),
+            ("output", "json"),
+            ("pageSize", str(page_size)),
+            ("showNumPages", "true"),
+        ]
+        if filters:
+            params_list.extend(("filter", value) for value in filters)
+        query_string = urlencode(params_list, safe=":*~!=.")
+        url = f"{self.COMMONCRAWL_INDEX_BASE}/{index_id}-index?{query_string}"
+        try:
+            response = self._request_with_retry(url)
+            data = response.json()
+            return max(0, int(data.get("pages", 0)))
+        except (requests.RequestException, ValueError, TypeError, AttributeError) as error:
+            raise APIError(f"Common Crawl page-count query failed for {index_id}: {error}")
+
     def query_commoncrawl_multi(
         self,
         index_ids: List[str],
         domain: str,
-        page_size: int = 50,
+        page_size: int = 5,
         filters: Optional[List[str]] = None,
         max_per_index: int = 500,
     ) -> List[Dict[str, Any]]:
@@ -336,19 +371,23 @@ class ArchiveAPIClient:
         seen_urls = set()
 
         for idx_id in index_ids:
+            total_pages = self.get_commoncrawl_page_count(idx_id, domain, page_size, filters)
             page = 0
             count = 0
-            while count < max_per_index:
+            while page < total_pages and count < max_per_index:
                 result = self.query_commoncrawl(
                     index_id=idx_id, domain=domain,
-                    page=page, page_size=page_size, filters=filters,
+                    page=page, page_size=page_size, total_pages=total_pages, filters=filters,
                 )
                 if not result["results"]:
                     break
-                for record in result["results"]:
+                remaining = max_per_index - count
+                for record in result["results"][:remaining]:
                     url = record.get("url", "")
                     if url and url not in seen_urls:
                         seen_urls.add(url)
+                        all_results.append(record)
+                    elif not url:
                         all_results.append(record)
                 count += len(result["results"])
                 if not result["has_more"]:
