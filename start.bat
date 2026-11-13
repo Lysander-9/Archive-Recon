@@ -1,36 +1,62 @@
 @echo off
 chcp 65001 >nul
-setlocal
+setlocal EnableExtensions
 
-title 渗透测试信息搜集工具
+title Archive-Recon
 echo ========================================
-echo   渗透测试信息搜集工具
+echo   Archive-Recon
 echo   Wayback Machine ^& Common Crawl
 echo ========================================
 echo.
 
 set "APP_SCRIPT=%~dp0main.py"
-set "PYTHON_EXE=%~dp0.venv\Scripts\python.exe"
-if not exist "%PYTHON_EXE%" set "PYTHON_EXE=C:\Users\Lysander\.workbuddy\binaries\python\envs\pentest-tool\Scripts\python.exe"
-if not exist "%PYTHON_EXE%" set "PYTHON_EXE=python"
+if exist "%APP_SCRIPT%" goto :find_python
 
-if not exist "%APP_SCRIPT%" (
-    echo [错误] 找不到程序文件：
-    echo "%APP_SCRIPT%"
-    goto :finish
+echo [ERROR] main.py not found next to this script:
+echo         "%APP_SCRIPT%"
+goto :finish
+
+:find_python
+rem 1) project virtualenv  2) py launcher  3) python on PATH
+if exist "%~dp0.venv\Scripts\python.exe" (
+    set "PY_CMD="%~dp0.venv\Scripts\python.exe""
+    goto :check_python
 )
+where py >nul 2>&1
+if not errorlevel 1 (
+    set "PY_CMD=py -3"
+    goto :check_python
+)
+where python >nul 2>&1
+if not errorlevel 1 (
+    set "PY_CMD=python"
+    goto :check_python
+)
+echo [ERROR] No Python 3 found.
+echo         Install Python 3.10+ (with Tcl/Tk) or create .venv first.
+goto :finish
 
-"%PYTHON_EXE%" -c "import tkinter, customtkinter, requests" >nul 2>&1
+:check_python
+%PY_CMD% -c "import sys" >nul 2>&1
 if errorlevel 1 (
-    echo [错误] 当前 Python 环境缺少 Tkinter 或项目依赖。
-    echo Python: "%PYTHON_EXE%"
-    echo.
-    echo 请使用包含 Tcl/Tk 的 Python 3.10+，并在该环境安装 requirements.txt 中的依赖。
-    echo 当前环境至少需要 tkinter、customtkinter 和 requests。
+    echo [ERROR] The Python command below does not work:
+    echo         %PY_CMD%
+    echo         Create .venv with: uv venv .venv
     goto :finish
 )
 
-"%PYTHON_EXE%" "%APP_SCRIPT%"
+rem Check GUI toolkit and runtime dependencies before launching
+%PY_CMD% -c "import tkinter, customtkinter, requests, pandas" >nul 2>&1
+if errorlevel 1 (
+    echo [ERROR] Tkinter or project dependencies are missing.
+    echo         Python: %PY_CMD%
+    echo.
+    echo         Use a Python 3.10+ build that includes Tcl/Tk, then run:
+    echo         %PY_CMD% -m pip install -r "%~dp0requirements.txt"
+    goto :finish
+)
+
+%PY_CMD% "%APP_SCRIPT%"
 
 :finish
 echo.

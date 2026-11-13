@@ -1,0 +1,11 @@
+* text=auto
+
+# Windows batch files must keep CRLF
+*.bat text eol=crlf
+
+# Shell scripts must keep LF
+*.sh text eol=lf
+
+*.png binary
+*.jpg binary
+*.ico binary

@@ -108,7 +108,7 @@
 
 **Files:**
 - Modify: `README.md`
-- Review: `main.py`、`api_client.py`、`启动工具.bat`
+- Review: `main.py`、`api_client.py`、`start.bat`
 
 - [ ] 更新安装/启动说明、Tkinter 运行时要求和新查询流程。
 - [ ] 说明结果上限、索引失败、取消后部分结果及敏感路径命中含义。

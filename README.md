@@ -1,6 +1,6 @@
 # 渗透测试信息搜集工具
 
-基于 Wayback Machine 和 Common Crawl 的网页存档数据搜集 GUI 工具，用于渗透测试前期信息收集阶段，快速检索目标域名的历史 URL、状态码、文件类型等存档记录。
+Archive-Recon 是一个基于 Wayback Machine 和 Common Crawl 的网页存档数据搜集 GUI 工具，用于渗透测试前期信息收集阶段，快速检索目标域名的历史 URL、状态码、文件类型等存档记录。项目不依赖任何本机固定路径，克隆后即可在 Windows / macOS / Linux 上运行。
 
 ## 功能特性
 
@@ -42,7 +42,7 @@
 - 表格包含统一表头、选中状态和敏感结果高亮样式
 
 ### 其他
-- 代理支持：HTTP / HTTPS / SOCKS 代理，可随时切换
+- 代理支持：HTTP / HTTPS / SOCKS 代理，可随时切换；默认值读取系统 `HTTPS_PROXY` / `HTTP_PROXY` 环境变量，未设置时留空直连
 - 复制功能：`Ctrl+C` 复制选中行 URL，右键菜单支持「复制 URL」和「复制整行数据」
 - 自定义可滚动下拉组件（`ScrollableComboBox`），解决 CTkComboBox 下拉列表无法滚动的问题
 
@@ -53,7 +53,7 @@
 - Common Crawl 使用服务端 `showNumPages` 元数据确定分页。`pageSize` 代表压缩索引块数，并非 URL 条数；每个索引最多读取 5 页，超过上限会标记为部分结果。
 - Common Crawl 请求按索引串行执行，分页请求之间至少等待 1 秒，以降低连续请求压力。
 - CSV / JSON 导出的是当前筛选条件匹配的全部记录，不限于表格当前页。
-- Windows 启动脚本使用程序目录下的 `.venv`（存在时），并在启动前检查 Tkinter 和项目依赖；不再依赖原开发机上的固定路径。
+- Windows 启动脚本按「项目 `.venv` → `py -3` → `python`」的顺序自动查找 Python，并在启动前检查 Tkinter 和项目依赖；不包含任何本机固定路径。macOS / Linux 使用 `start.sh`。
 
 ## 环境要求
 
@@ -65,8 +65,8 @@
 
 ```bash
 # 克隆仓库
-git clone https://github.com/Lysander-9/pentest-archive-tool.git
-cd pentest-archive-tool
+git clone https://github.com/Lysander-9/Archive-Recon.git
+cd Archive-Recon
 
 # 创建虚拟环境（推荐）
 uv venv .venv
@@ -86,7 +86,7 @@ uv pip install --python .venv\Scripts\python.exe -r requirements.txt
 .venv\Scripts\python.exe main.py
 ```
 
-Windows 用户也可双击 `start.bat` 启动。脚本优先使用项目 `.venv`，并在启动前检查 Tkinter 和所需依赖。
+Windows 用户也可双击 `start.bat` 启动，macOS / Linux 用户运行 `./start.sh`。两个脚本都会优先使用项目 `.venv`，并在启动前检查 Tkinter 和所需依赖；找不到可用环境时会打印具体的安装命令而不是静默失败。
 
 ### 基本操作
 
@@ -109,12 +109,21 @@ Windows 用户也可双击 `start.bat` 启动。脚本优先使用项目 `.venv`
 ## 项目结构
 
 ```
-pentest-archive-tool/
+Archive-Recon/
 ├── main.py              # GUI 主程序（CustomTkinter）
-├── api_client.py         # Wayback CDX & Common Crawl API 客户端
-├── requirements.txt      # Python 依赖
-├── 启动工具.bat          # Windows 快速启动脚本
+├── api_client.py        # Wayback CDX & Common Crawl API 客户端
+├── requirements.txt     # Python 依赖
+├── start.bat            # Windows 启动脚本（自动查找 Python）
+├── start.sh             # macOS / Linux 启动脚本
+├── tests/               # 单元测试（unittest）
+├── docs/                # 设计与实现记录
 └── README.md
+```
+
+## 测试
+
+```bash
+python -m unittest discover -s tests -v
 ```
 
 ## 技术栈

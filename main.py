@@ -9,6 +9,7 @@ import csv
 import json
 import re
 import os
+import sys
 from datetime import datetime
 from urllib.parse import urlparse
 from tkinter import filedialog, messagebox
@@ -106,7 +107,7 @@ class ScrollableComboBox(ctk.CTkFrame):
         # 下拉窗口宽度：取组合框宽度和最长条目宽度的较大值，避免截断
         import tkinter.font as tkfont
         try:
-            font_obj = tkfont.Font(family="Microsoft YaHei UI", size=12)
+            font_obj = tkfont.Font(family=FONT_FAMILY, size=12)
             max_text = max(
                 (font_obj.measure(str(v) if v else "（全部）") for v in self._values),
                 default=0,
@@ -206,7 +207,20 @@ COLORS = {
     "danger_hover": ("#B72F3D", "#F06470"),
     "warning_bg": ("#FFF4CF", "#4A3917"),
 }
-FONT_FAMILY = "Microsoft YaHei UI"
+# 字体按平台选择，缺失时由 Tk 自动回退到系统默认字体
+FONT_FAMILY = {
+    "win32": "Microsoft YaHei UI",
+    "darwin": "PingFang SC",
+}.get(sys.platform, "Noto Sans CJK SC")
+
+
+def _default_proxy_from_env() -> str:
+    """读取系统代理环境变量作为默认代理，未设置时留空（直连）"""
+    for key in ("HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy"):
+        value = (os.environ.get(key) or "").strip()
+        if value:
+            return value
+    return ""
 
 # 敏感/有趣的文件扩展名模式
 INTERESTING_PATTERNS = [
@@ -765,7 +779,7 @@ class ResultsTable(ctk.CTkFrame):
     def _auto_size_columns(self):
         """根据当前页内容自动调整各列 minwidth（URL 列 stretch 填满剩余空间）"""
         import tkinter.font as tkfont
-        font = tkfont.Font(family="Microsoft YaHei UI", size=self.current_font_size)
+        font = tkfont.Font(family=FONT_FAMILY, size=self.current_font_size)
 
         for col_key, col_name, default_w in self.COLUMNS:
             w = font.measure(col_name) + 30
@@ -1156,7 +1170,7 @@ class ArchiveSearchApp(ctk.CTk):
         self.network_settings = ctk.CTkFrame(self.top_bar, fg_color=COLORS["surface_alt"], corner_radius=10)
         ctk.CTkLabel(self.network_settings, text="代理地址", text_color=COLORS["muted"], font=field_label_font).pack(side="left", padx=(12, 8), pady=10)
         self.entry_proxy = ctk.CTkEntry(self.network_settings, height=34, placeholder_text="留空则直连", fg_color=COLORS["surface"], border_color=COLORS["border"], width=300)
-        self.entry_proxy.insert(0, "http://127.0.0.1:7890")
+        self.entry_proxy.insert(0, _default_proxy_from_env())
         self.entry_proxy.pack(side="left", padx=(0, 8), pady=8)
         self.btn_apply_proxy = ctk.CTkButton(self.network_settings, text="应用代理", width=92, height=34, fg_color=COLORS["primary"], hover_color=COLORS["primary_hover"], command=self._apply_proxy)
         self.btn_apply_proxy.pack(side="left", padx=(0, 12), pady=8)
