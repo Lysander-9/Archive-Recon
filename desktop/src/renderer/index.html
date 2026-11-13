@@ -10,104 +10,202 @@
     <link rel="stylesheet" href="styles.css" />
   </head>
   <body>
-    <header class="topbar">
-      <h1 class="brand">Archive Recon</h1>
-      <div class="field grow">
-        <label for="target-input">目标域名</label>
-        <input id="target-input" data-testid="target-input" placeholder="例如 example.com 或 *.example.com" />
-      </div>
-      <div class="field">
-        <label for="source-select">来源</label>
-        <select id="source-select" data-testid="source-select">
-          <option value="wayback">Wayback Machine</option>
-          <option value="commoncrawl">Common Crawl</option>
-        </select>
-      </div>
-      <div class="field">
-        <label for="range-mode">时间范围</label>
-        <select id="range-mode" data-testid="range-mode">
-          <option value="recent">最近 N 个月</option>
-          <option value="month">指定年月</option>
-          <option value="all">全部时间</option>
-        </select>
-      </div>
-      <div class="field range-extra" id="range-recent">
-        <label for="range-months">月数</label>
-        <input id="range-months" data-testid="range-months" type="number" min="1" max="120" value="3" />
-      </div>
-      <div class="field range-extra hidden" id="range-month">
-        <label for="range-year">年月</label>
-        <input id="range-year" data-testid="range-year" type="number" min="2000" max="2100" />
-        <input id="range-month-value" data-testid="range-month-value" type="number" min="1" max="12" value="1" />
-      </div>
-      <div class="field">
-        <label for="proxy-mode">代理</label>
-        <select id="proxy-mode" data-testid="proxy-mode">
-          <option value="direct">直连</option>
-          <option value="system">系统代理</option>
-          <option value="fixed">固定代理</option>
-        </select>
-      </div>
-      <div class="field hidden" id="proxy-fixed">
-        <label for="proxy-server">代理地址</label>
-        <input id="proxy-server" data-testid="proxy-server" placeholder="http://127.0.0.1:7890" />
-      </div>
-      <button id="start-button" data-testid="start-button">开始查询</button>
-      <button id="cancel-button" data-testid="cancel-button" class="danger" disabled>停止</button>
-    </header>
+    <div class="app">
+      <header class="querybar">
+        <div class="brand">
+          <span class="brand-name">Archive Recon</span>
+          <span class="brand-sub">网页存档信息搜集</span>
+        </div>
+        <div class="field target-field">
+          <label for="target-input">目标域名</label>
+          <input
+            id="target-input"
+            data-testid="target-input"
+            type="text"
+            spellcheck="false"
+            autocomplete="off"
+            placeholder="例如 example.com 或 *.example.com"
+            aria-describedby="dirty-hint"
+          />
+          <span id="dirty-hint" data-testid="dirty-hint" class="dirty-hint hidden">
+            输入已修改，将在下次查询生效
+          </span>
+        </div>
+        <div class="field source-field">
+          <label for="source-select">来源</label>
+          <select id="source-select" data-testid="source-select">
+            <option value="wayback">Wayback Machine</option>
+            <option value="commoncrawl">Common Crawl</option>
+          </select>
+        </div>
+        <div class="query-actions">
+          <button id="start-button" data-testid="start-button" class="primary">开始查询</button>
+          <button id="cancel-button" data-testid="cancel-button" class="danger" disabled>停止</button>
+        </div>
+      </header>
 
-    <section class="statusbar">
-      <span id="status-chip" data-testid="status-chip" class="chip idle">就绪</span>
-      <span id="scope-label" data-testid="scope-label"></span>
-      <span id="summary" data-testid="summary"></span>
-      <span id="notice" data-testid="notice"></span>
-    </section>
+      <section class="optionsbar" aria-label="查询范围与网络">
+        <div class="field compact">
+          <label for="range-mode">时间范围</label>
+          <select id="range-mode" data-testid="range-mode">
+            <option value="recent">最近 N 个自然月</option>
+            <option value="month">指定年月</option>
+            <option value="all">全部时间</option>
+          </select>
+        </div>
+        <div class="field compact" id="range-recent">
+          <label for="range-months">月数（1–120）</label>
+          <input id="range-months" data-testid="range-months" type="number" min="1" max="120" value="3" />
+        </div>
+        <div class="field compact hidden" id="range-month">
+          <label for="range-year">指定年月</label>
+          <span class="inline-inputs">
+            <input id="range-year" data-testid="range-year" type="number" min="2000" max="2100" aria-label="年" />
+            <span class="muted">年</span>
+            <input
+              id="range-month-value"
+              data-testid="range-month-value"
+              type="number"
+              min="1"
+              max="12"
+              value="1"
+              aria-label="月"
+            />
+            <span class="muted">月（UTC）</span>
+          </span>
+        </div>
+        <div class="field compact">
+          <label for="proxy-mode">代理</label>
+          <select id="proxy-mode" data-testid="proxy-mode">
+            <option value="direct">直连</option>
+            <option value="system">系统代理</option>
+            <option value="fixed">固定代理</option>
+          </select>
+        </div>
+        <div class="field compact hidden" id="proxy-fixed">
+          <label for="proxy-server">代理地址</label>
+          <input id="proxy-server" data-testid="proxy-server" type="text" placeholder="http://127.0.0.1:7890" />
+        </div>
+        <span class="hint">代理与范围在开始查询时冻结，修改只影响下一次查询</span>
+      </section>
 
-    <section class="filters">
-      <input id="filter-status" data-testid="filter-status" placeholder="状态码，如 200,!404" />
-      <input id="filter-filetype" data-testid="filter-filetype" placeholder="文件类型" />
-      <input id="filter-url" data-testid="filter-url" placeholder="URL 关键词，! 排除" />
-      <button id="apply-filter" data-testid="apply-filter">应用筛选</button>
-      <button id="clear-filter" data-testid="clear-filter">清除条件</button>
-      <span class="spacer"></span>
-      <button id="export-csv" data-testid="export-csv">导出 CSV</button>
-      <button id="export-json" data-testid="export-json">导出 JSON</button>
-      <button id="copy-url" data-testid="copy-url">复制 URL</button>
-    </section>
+      <section class="statusbar" aria-label="任务状态">
+        <span id="status-chip" data-testid="status-chip" class="chip idle">就绪</span>
+        <span id="task-text" data-testid="task-text" class="task-text" aria-live="polite">
+          输入目标域名后开始查询
+        </span>
+        <button id="reasons-button" data-testid="reasons-button" class="ghost warn hidden">
+          0 项未完成
+        </button>
+        <span id="notice" data-testid="notice" class="notice" role="status" aria-live="polite"></span>
+      </section>
 
-    <main class="table-wrap">
-      <table>
-        <thead>
-          <tr>
-            <th class="select-col"></th>
-            <th data-sort="timestamp">时间</th>
-            <th data-sort="status_code">状态码</th>
-            <th data-sort="length">长度</th>
-            <th data-sort="file_type">文件类型</th>
-            <th data-sort="url">URL</th>
-          </tr>
-        </thead>
-        <tbody id="rows-body" data-testid="rows-body"></tbody>
-      </table>
-      <p id="empty-state" data-testid="empty-state" class="empty">未开始；输入目标域名后开始查询。</p>
-    </main>
+      <section class="workspace" aria-label="结果工作区">
+        <div class="workspace-head">
+          <span id="scope-label" data-testid="scope-label" class="scope">尚未开始查询</span>
+          <span id="budget-label" data-testid="budget-label" class="muted"></span>
+          <span class="spacer"></span>
+          <span id="summary" data-testid="summary" class="summary">0 条</span>
+        </div>
 
-    <footer class="pagination">
-      <button id="prev-page" data-testid="prev-page">上一页</button>
-      <span id="page-label" data-testid="page-label">第 1 / 1 页</span>
-      <button id="next-page" data-testid="next-page">下一页</button>
-      <label>
-        每页
-        <select id="page-size" data-testid="page-size">
-          <option>20</option>
-          <option selected>50</option>
-          <option>100</option>
-          <option>200</option>
-          <option>500</option>
-          <option>1000</option>
-        </select>
-      </label>
-    </footer>
+        <div class="filters" role="search" aria-label="筛选与显示">
+          <input id="filter-status" data-testid="filter-status" type="text" placeholder="状态码 200,!404" aria-label="状态码筛选" />
+          <input id="filter-filetype" data-testid="filter-filetype" type="text" placeholder="文件类型" aria-label="文件类型筛选" />
+          <input id="filter-url" data-testid="filter-url" type="text" placeholder="URL 关键词，! 排除" aria-label="URL 关键词筛选" />
+          <input
+            id="filter-domain"
+            data-testid="filter-domain"
+            type="text"
+            list="domain-options"
+            placeholder="域名，! 排除"
+            title="域名筛选：支持逗号多值与 ! 排除；下拉提示来自当前页出现的域名"
+            aria-label="域名筛选"
+          />
+          <datalist id="domain-options"></datalist>
+          <label class="check">
+            <input id="filter-interesting" data-testid="filter-interesting" type="checkbox" />
+            敏感路径
+          </label>
+          <label class="inline-select">
+            字号
+            <select id="font-size" data-testid="font-size">
+              <option value="small">小</option>
+              <option value="default" selected>默认</option>
+              <option value="medium">中</option>
+              <option value="large">大</option>
+              <option value="xlarge">超大</option>
+            </select>
+          </label>
+          <button id="apply-filter" data-testid="apply-filter" class="primary">应用筛选</button>
+          <button id="clear-filter" data-testid="clear-filter" class="ghost">清除条件</button>
+          <span id="filter-pending" data-testid="filter-pending" class="pending hidden">有条件未应用</span>
+        </div>
+
+        <div class="table-wrap">
+          <div class="table-scroll">
+            <table>
+              <thead>
+                <tr>
+                  <th class="select-col">
+                    <input id="select-all" type="checkbox" aria-label="全选当前页" />
+                  </th>
+                  <th class="rownum-col">#</th>
+                  <th data-sort="timestamp">时间</th>
+                  <th data-sort="status_code">状态码</th>
+                  <th data-sort="length">长度</th>
+                  <th data-sort="file_type">文件类型</th>
+                  <th data-sort="url">URL</th>
+                </tr>
+              </thead>
+              <tbody id="rows-body" data-testid="rows-body"></tbody>
+            </table>
+          </div>
+          <div id="empty-state" data-testid="empty-state" class="empty-state">
+            <p id="empty-title" class="empty-title">还没有结果</p>
+            <p id="empty-detail" class="empty-detail">输入目标域名后开始查询</p>
+            <button id="empty-action" class="ghost hidden">重新查询</button>
+          </div>
+        </div>
+      </section>
+
+      <footer class="pagination" aria-label="分页与导出">
+        <span id="page-range" data-testid="page-range" class="muted">0 条</span>
+        <button id="prev-page" data-testid="prev-page" class="ghost">上一页</button>
+        <span id="page-label" data-testid="page-label">第 1 / 1 页</span>
+        <button id="next-page" data-testid="next-page" class="ghost">下一页</button>
+        <label class="inline-select">
+          每页
+          <select id="page-size" data-testid="page-size">
+            <option value="20">20</option>
+            <option value="50" selected>50</option>
+            <option value="100">100</option>
+            <option value="200">200</option>
+            <option value="500">500</option>
+            <option value="1000">1000</option>
+          </select>
+        </label>
+        <span class="jump">
+          <label for="page-jump">跳至</label>
+          <input id="page-jump" data-testid="page-jump" type="number" min="1" inputmode="numeric" />
+          <button id="page-jump-go" data-testid="page-jump-go" class="ghost">GO</button>
+        </span>
+        <span class="spacer"></span>
+        <button id="copy-url" data-testid="copy-url" class="ghost">复制 URL</button>
+        <button id="copy-row" data-testid="copy-row" class="ghost">复制整行</button>
+        <button id="export-csv" data-testid="export-csv" class="primary">导出 CSV</button>
+        <button id="export-json" data-testid="export-json">导出 JSON</button>
+      </footer>
+    </div>
+
+    <dialog id="reasons-dialog" data-testid="reasons-dialog" aria-labelledby="reasons-title">
+      <h2 id="reasons-title">未完成原因</h2>
+      <p id="reasons-scope" class="muted"></p>
+      <ul id="reasons-list" data-testid="reasons-list"></ul>
+      <div class="dialog-actions">
+        <button id="reasons-copy" class="ghost">复制摘要</button>
+        <button id="reasons-close" class="primary">关闭</button>
+      </div>
+    </dialog>
 
     <script src="renderer.js"></script>
   </body>
