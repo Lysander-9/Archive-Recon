@@ -24,6 +24,8 @@
   --chip-on-accent: #ffffff;
   --row-hover: #eef3fb;
   --row-selected: #dbe8ff;
+  --row-interesting-bg: #fff0ba;
+  --row-interesting-fg: #5a4300;
   --status-2xx: #16825d;
   --status-3xx: #8a5b12;
   --status-4xx: #b45309;
@@ -33,7 +35,7 @@
 }
 
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme]) {
     --page: #0e1523;
     --surface: #172033;
     --surface-alt: #111a2b;
@@ -55,11 +57,50 @@
     --chip-partial-fg: #f0b429;
     --row-hover: #1d2740;
     --row-selected: #1d3358;
+    --row-interesting-bg: #4a3917;
+    --row-interesting-fg: #f5d98a;
     --status-2xx: #34d399;
     --status-3xx: #f0b429;
     --status-4xx: #fbbf24;
     --status-5xx: #f87171;
   }
+}
+
+/* nativeTheme 通道（themeGet / themeChanged）给出的权威外观。
+   与上面的媒体查询回退保持同一组值；data-theme 一旦设置，媒体查询即不再生效。 */
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --page: #0e1523;
+  --surface: #172033;
+  --surface-alt: #111a2b;
+  --border: #2b3850;
+  --text: #f3f6fc;
+  --muted: #9aa8bc;
+  --primary: #3b82f6;
+  --primary-hover: #60a5fa;
+  --success: #22a06b;
+  --danger: #e05260;
+  --warning: #f0b429;
+  --warning-bg: #4a3917;
+  --chip-idle-bg: #24324a;
+  --chip-idle-fg: #e2e8f0;
+  --chip-run: #2563eb;
+  --chip-done: #16825d;
+  --chip-fail: #b72f3d;
+  --chip-partial-bg: #4a3917;
+  --chip-partial-fg: #f0b429;
+  --row-hover: #1d2740;
+  --row-selected: #1d3358;
+  --row-interesting-bg: #4a3917;
+  --row-interesting-fg: #f5d98a;
+  --status-2xx: #34d399;
+  --status-3xx: #f0b429;
+  --status-4xx: #fbbf24;
+  --status-5xx: #f87171;
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
 }
 
 * {
@@ -545,6 +586,14 @@ td.status-5xx {
 
 tbody tr:hover {
   background: var(--row-hover);
+}
+
+tbody tr.interesting {
+  background: var(--row-interesting-bg);
+}
+
+tbody tr.interesting td:first-child {
+  box-shadow: inset 3px 0 0 var(--row-interesting-fg);
 }
 
 tbody tr.selected {
