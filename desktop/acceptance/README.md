@@ -34,21 +34,23 @@ node acceptance/prepare.mjs
 node acceptance/packaged/run-packaged-acceptance.mjs
 ```
 
-当前固定候选结果（2026-11-13，`0859d1f`，验收集 `5681a83`）：
+当前固定候选结果（2026-11-13，`3bcabe4`，验收集 `31aea33`；增量 `5a548b3` 已核验）：
 
 | 项 | 结果 |
 |---|---|
-| 独立验收 | **97 tests / 96 pass / 0 fail / 1 skip**，exit 0 |
+| 独立验收 | **103 tests / 102 pass / 0 fail / 1 skip**，exit 0（3bcabe4 与 5a548b3 相同） |
+| 增量 5a548b3 | 仅 renderer 空态修复 + 新 E2E；首次非法目标/代理失败真实 bridge 探针 PASS，已有任务回滚 PASS |
 | skip | 无 Node/Python 干净 Windows 环境的 ZIP 验收（真实缺口，不删除） |
-| 开发自测（仅记录） | unit 63 pass；Electron E2E 18 pass |
-| 构建 | typecheck / dist:win 通过；本地 ZIP 153,301,281 bytes，SHA-256 `87d3dfb3…ee10a` |
+| 新增覆盖 | 同批/跨批重复预算、恰好上限、页级字节预算、collinfo 解析、重定向拒绝 |
+| 开发自测（仅记录） | unit 72 pass；Electron E2E 29 pass |
+| 构建 | typecheck/build/dist:win 通过；本地 ZIP 153,304,703 bytes，SHA-256 `5c284b91…7534d`（与开发声明 `7676691e…2356eb` 不同，未声称复现原产物哈希） |
+| 独立 UI 探针 | nativeTheme、1202×680/1040×620、高亮/筛选/分页/排序、来源冻结、partial 0、copyReasons 真实剪贴板、停止重启、快速筛选 PASS |
 | 独立打包验收 | 精确“完成”+ 重试行数 3 + 五字段 CSV，`ok=true`；打包双击只产生 1 组请求 |
 | 代理 | HTTP 免认证/认证成功；SOCKS5 免认证成功；SOCKS5 认证启动前拒绝（PROXY，零请求/零直连）；环回默认 bypass 仍列 gap |
 
 历史失败记录（`a417955`、`2c2438a`）见 `reports/`，不因新候选通过而删除或改写。
-`0859d1f` 已关闭并发/双击、创建期关闭、closeAll 会话、Wayback 续页、非法日期、
-UTC 边界与 T1 非法主机字符；主题/interesting/copyReasons 的正式 renderer 接线
-仍未完成，不能据契约测试宣称对应界面通过。
+主题/interesting/copyReasons 已由正式 renderer 接线；真实 OS 手动主题切换、物理
+1366×768、macOS/Linux 与干净 Windows ZIP 仍未验证。
 
 ## 目录
 
@@ -72,6 +74,7 @@ UTC 边界与 T1 非法主机字符；主题/interesting/copyReasons 的正式 r
 | `proxy/run-proxy-acceptance.ts` | 真实 Electron session 的环回 HTTP/SOCKS/认证/失败验收 |
 | `packaged/run-packaged-acceptance.mjs` | 独立打包验收：精确“完成”+ 可重试行数 + 五字段 CSV |
 | `packaged/run-double-click-acceptance.mjs` | 打包 exe 真实双击：只允许一个请求组 |
+| `ui/run-ui-acceptance.mjs` | 独立真实窗口探针：nativeTheme、高亮、原因复制、来源冻结、partial 0、小窗口、停止重启、快速筛选 |
 | `fixtures/` | 官方 collinfo、异常元数据、来源响应、固定时钟、代理矩阵 |
 | `reports/` | 实际执行结果、缺陷与未覆盖项 |
 
