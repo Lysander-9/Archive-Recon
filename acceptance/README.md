@@ -18,6 +18,10 @@
 | `test_t5_export_contract.py` | 真实落盘的 CSV/JSON 五字段与失败路径 |
 | `test_t6_startup_contract.py` | 导入入口、显示列、依赖声明 |
 | `startup_smoke.py` | 需要桌面会话的 GUI 启动冒烟 |
+| `PR1_ACCEPTANCE_REPORT.md` | PR #1 固定提交 `6349a0e` 的独立验收结果与缺陷/未实现清单 |
+
+针对 PR #1 的独立验收工具位于仓库根目录 `acceptance_pr1/`（依赖 `archrecon`，
+只应在包含该包的提交上运行；用法见其 README）。
 
 ## 环境与命令（Windows 优先）
 

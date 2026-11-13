@@ -1,0 +1,8 @@
+[
+  ["urlkey", "timestamp", "original", "mimetype", "statuscode", "digest", "length"],
+  ["com,example)/", "20240102030405", "https://example.com/", "text/html; charset=utf-8", "200", "WB-DIGEST-1", "512"],
+  ["com,example)/admin", "20231231235959", "https://example.com/admin", "text/html", "403", "WB-DIGEST-2", "128"],
+  ["com,example)/app.js", "20240201000000", "https://example.com/app.js", "application/javascript", "200", "WB-DIGEST-3", "2048"],
+  ["com,example)/dup", "20220101000000", "https://example.com/dup", "text/html", "200", "WB-DIGEST-4", "10"],
+  ["com,example)/dup", "20230101000000", "https://example.com/dup", "text/html", "301", "WB-DIGEST-5", "0"]
+]
