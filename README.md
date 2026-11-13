@@ -33,7 +33,8 @@ Get-FileHash .\ArchiveRecon-0.1.0-win-x64.zip -Algorithm SHA256
 - **结果整理**：按完整 URL 首条去重（同批与跨批），筛选作用于全部结果并保持追加时的筛选与排序，排序稳定，分页与筛选条件一致；`RowView.interesting` 由共享规则提供，供界面高亮敏感路径。
 - **导出**：CSV / JSON，固定五字段 `timestamp,status_code,length,file_type,url`，始终导出当前筛选排序下的全量快照；CSV 为 UTF-8 BOM + CRLF；内部 `source`/`rawTimestamp`/`indexId` 与界面行号不导出；同目录临时文件 + rename 原子写入。
 - **任务语义**：单任务串行；启动在任何异步等待前原子占用唯一任务槽，忙时返回 BUSY，关闭窗口期间/之后拒绝新任务；`jobId/source/seq/revision` 归属校验；每个任务只发一次终态并递增 revision；停止保留已收记录；旧任务与跨来源事件不会写入新集合；关闭时幂等关闭每个任务 session。
-- **网络与代理**：直连 / 系统代理 / 固定代理（HTTP、HTTPS、SOCKS）。每个任务独立 Electron session 分区，`setProxy` 完成后才发起请求；HTTP 代理认证通过 Chromium 代理挑战按任务应答，凭据只存内存且不进入规则、快照、日志或错误文本；代理失败即失败，**不静默回退直连**。SOCKS 认证 Chromium 不支持，启动时明确拒绝并说明替代方案。
+- **网络与代理**：直连 / 系统代理 / 固定代理（HTTP、HTTPS、SOCKS）。每个任务独立 Electron session 分区，`setProxy` 完成后才发起请求；HTTP 代理认证通过 Chromium 代理挑战按任务应答，凭据只存内存且不进入规则、快照、日志或错误文本；代理失败即失败，**不静默回退直连**。SOCKS 认证 Chromium 不支持，启动时明确拒绝并说明替代方案。系统代理使用操作系统代理设置（可用 `resolveProxy` 核对）；环境变量 `HTTPS_PROXY`/`HTTP_PROXY` 只作为提示，不会静默改变任务代理。
+- **错误诊断**：来源/代理失败会区分代理连接失败、407/认证、TLS/证书、DNS、429/5xx、超时与响应预算，显示阶段（页数查询/分页/CONNECT）、HTTP 状态、Chromium 错误与尝试次数；429/502/503/504 有界重试（最多 3 次、0.75s/2s 退避），不做无限重试、失败直连或关闭 TLS 校验。Common Crawl 上游 5xx 会明确显示“来源网关超时（HTTP 504）”等，而不再伪装成“没有存档”。
 - **来源端点约束**：Common Crawl 只接受官方 `https://index.commoncrawl.org` 或配置索引同源的 `cdx-api`，其他端点按非法元数据计入原因。
 - **查询预算（未扩大）**：Wayback ≤ 20 页 × 50 条；Common Crawl 每索引 ≤ 5 页、`pageSize=5`（索引块单位）。达到上限时明确标记为部分结果并给出原因。
 - **资源预算**：单响应 ≤ 8 MiB、单任务 ≤ 50,000 条唯一记录、历史保留 ≤ 20 个终态任务。记录预算只按“尚未存在且本批未重复”的唯一 URL 填满剩余额度，重复不占额度、不谎报丢失；`received` 始终是原始接收数。页级响应超限保留前面结果，给出字节预算原因并落 `partial`；`collinfo` 非 JSON/非数组按 `range_unknown` 处理；重定向逐跳校验，只允许官方/配置同源端点。
@@ -57,7 +58,7 @@ Windows 用户也可在仓库根目录双击 `start.bat`：它只在本地已存
 
 首次安装需要联网；构建产物与 `node_modules` 均不入库（见 `.gitignore`）。
 
-当前候选验证（Windows 11 / Node 26.13.0，2026-11-13）：`typecheck`、`build` 通过；单元 **72 passed**；Electron 真实窗口 E2E **29 passed**；独立 acceptance（`75afc8f` + `ccffa32`）**97 tests / 96 pass / 0 fail / 1 skip**。最终 ZIP 与干净 Windows 分发验证在集成冻结后单独记录。
+当前候选验证（Windows 11 / Node 26.13.0，2026-11-13）：`typecheck`、`build` 通过；单元 **79 passed**；Electron 真实窗口 E2E **31 passed**；独立 acceptance（`75afc8f` + `ccffa32`）**97 tests / 96 pass / 0 fail / 1 skip**。最终 ZIP 与干净 Windows 分发验证在集成冻结后单独记录。
 
 ## 目录结构
 
@@ -84,6 +85,7 @@ IPC 面：`archive:startQuery`、`archive:cancelQuery`、`archive:getView`、`ar
 - 仅 Windows x64 构建；未签名、无安装器（NSIS/MSI），以目录 ZIP 分发；exe 已写产品身份与图标，但仍为未签名状态。
 - 固定代理支持免认证 HTTP/HTTPS/SOCKS5 与 HTTP 认证；**SOCKS 认证经确认不受 Chromium 支持，启动时明确拒绝**。真实代理路径已用非环回地址夹具验证，环回默认 bypass 缺口仍如实记录，生产 bypass 策略未改。
 - Common Crawl 时间语义按官方 `from/to` 元数据实现，未联网核对全部历史索引样本。
+- Common Crawl 官方索引端点可能出现上游 502/504/503（本次实测部分索引持续 504），应用会显示具体 HTTP 状态并做有限重试；这属于上游可用性问题，需稍后重试，不等同于“没有存档”。
 - 界面已接入正式结果工作区；逐行 `interesting` 高亮、原因摘要复制桥、`nativeTheme` 主题契约已冻结，前端最小接线尚未完成。
 - 无 Node/Python 的干净 Windows 分发验证尚未完成，现有本机打包 exe 冒烟不计为该验收。
 - 旧 Python 版本的行为兼容仅限五字段导出契约；其余交互以本版本为准。

@@ -934,6 +934,69 @@ test.describe("job manager (T1/T2/T3)", () => {
     if (!stale.ok) expect(stale.error.code).toBe("STALE_VIEW");
   });
 
+  test("source failures keep HTTP status and stage", async () => {
+    const manager = new JobManager(
+      deps({
+        commoncrawl: {
+          fetchIndexes: async () => ({ metas: [indexMeta()], invalidCount: 0 }),
+          pageCount: async () => {
+            throw new AppError("NETWORK", "来源网关超时（HTTP 504）", {
+              context: { stage: "http", httpStatus: 504, attempts: 3, kind: "http" },
+            });
+          },
+          queryPage: async () => ({ records: [], hasMore: false, parseSkipped: 0, reasons: [] }),
+        },
+      }),
+    );
+    const started = await manager.start({
+      target: "example.com",
+      source: "commoncrawl",
+      range: { kind: "all" },
+      proxy: { mode: "direct" },
+    });
+    expect(started.ok).toBe(true);
+    if (!started.ok) return;
+    await until(() => viewOf(manager, started.value.jobId, "commoncrawl").terminal);
+
+    const view = viewOf(manager, started.value.jobId, "commoncrawl");
+    const reason = view.reasons.find((item) => item.code === "network");
+    expect(reason?.message).toContain("HTTP 504");
+    expect(reason?.message).toContain("页数查询失败");
+    expect(reason?.context?.httpStatus).toBe(504);
+    expect(reason?.context?.stage).toBe("cc-page-count");
+  });
+
+  test("direct network failure adds the available system proxy advice", async () => {
+    const manager = new JobManager(
+      deps({
+        proxyAdvice: async () => "系统代理可用（127.0.0.1:7890），本次任务使用直连",
+        wayback: {
+          queryPage: async () => {
+            throw new AppError("NETWORK", "代理连接失败（net::ERR_TUNNEL_CONNECTION_FAILED）", {
+              retryable: true,
+              context: { stage: "transport", kind: "proxy", attempts: 1 },
+            });
+          },
+        },
+      }),
+    );
+    const started = await manager.start({
+      target: "example.com",
+      source: "wayback",
+      range: { kind: "all" },
+      proxy: { mode: "direct" },
+    });
+    expect(started.ok).toBe(true);
+    if (!started.ok) return;
+    await until(() => viewOf(manager, started.value.jobId).terminal);
+
+    const view = viewOf(manager, started.value.jobId);
+    const reason = view.reasons.find((item) => item.code === "network");
+    expect(reason?.message).toContain("代理连接失败");
+    expect(reason?.message).toContain("系统代理可用");
+    expect(reason?.context?.kind).toBe("proxy");
+  });
+
   test("reason summary copy is revision-checked and restricted to the job", () => {
     const environment = deps();
     const manager = new JobManager(environment);

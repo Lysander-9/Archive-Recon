@@ -279,3 +279,86 @@ test.describe("HTTP deadline", () => {
     ).rejects.toMatchObject({ code: "TIMEOUT" });
   });
 });
+
+test.describe("HTTP failure classification and bounded retry", () => {
+  test("retries a transient 504 once and succeeds", async () => {
+    const { transport, urls } = fakeTransport([
+      textResponse("gateway timeout", 504),
+      textResponse("ok", 200),
+    ]);
+
+    const response = await fetchText(transport, "https://index.commoncrawl.org/x", {
+      transport,
+      signal: new AbortController().signal,
+      timeoutMs: 2000,
+      retryDelaysMs: [1, 1],
+    });
+
+    expect(response.status).toBe(200);
+    expect(response.text).toBe("ok");
+    expect(urls).toHaveLength(2);
+  });
+
+  test("persistent 5xx surfaces the HTTP status and attempt count", async () => {
+    const { transport } = fakeTransport([textResponse("", 504)]);
+
+    await expect(
+      fetchText(transport, "https://index.commoncrawl.org/x", {
+        transport,
+        signal: new AbortController().signal,
+        timeoutMs: 2000,
+        retryDelaysMs: [1, 1],
+      }),
+    ).rejects.toMatchObject({
+      message: expect.stringContaining("HTTP 504"),
+      context: expect.objectContaining({ httpStatus: 504, attempts: 3 }),
+    });
+  });
+
+  test("retries 429 with backoff and reports rate limiting when persistent", async () => {
+    const { transport, urls } = fakeTransport([textResponse("rate limited", 429)]);
+    await expect(
+      fetchText(transport, "https://index.commoncrawl.org/x", {
+        transport,
+        signal: new AbortController().signal,
+        timeoutMs: 2000,
+        retryDelaysMs: [1, 1],
+      }),
+    ).rejects.toMatchObject({ message: expect.stringContaining("HTTP 429") });
+    expect(urls).toHaveLength(3);
+  });
+
+  test("classifies proxy, DNS and TLS transport errors", async () => {
+    const cases: Array<[string, string]> = [
+      ["net::ERR_TUNNEL_CONNECTION_FAILED", "代理连接失败"],
+      ["net::ERR_NAME_NOT_RESOLVED", "域名解析失败"],
+      ["net::ERR_CERT_AUTHORITY_INVALID", "TLS/证书校验失败"],
+    ];
+    for (const [message, expected] of cases) {
+      const { transport } = fakeTransport([new Error(message)]);
+      await expect(
+        fetchText(transport, "https://index.commoncrawl.org/x", {
+          transport,
+          signal: new AbortController().signal,
+          timeoutMs: 2000,
+          retryDelaysMs: [1, 1],
+        }),
+      ).rejects.toMatchObject({ message: expect.stringContaining(expected) });
+    }
+  });
+
+  test("retries a transient empty-response transport error once", async () => {
+    const { transport, urls } = fakeTransport([
+      new Error("net::ERR_EMPTY_RESPONSE"),
+      textResponse("ok", 200),
+    ]);
+    const response = await fetchText(transport, "https://index.commoncrawl.org/x", {
+      transport,
+      signal: new AbortController().signal,
+      timeoutMs: 2000,
+      retryDelaysMs: [1, 1],
+    });
+    expect(response.text).toBe("ok");
+    expect(urls).toHaveLength(2);
+  });
+});

@@ -373,13 +373,15 @@ export class JobManager {
         job.completion = "partial";
       } else {
         job.lastError = errorFromUnknown(error, job.source);
-        job.reasons.push({
-          code: job.lastError.code === "TIMEOUT" ? "network" : "network",
-          message: job.lastError.message,
+        const reason: ReasonDto = {
+          code: "network",
+          message: await this.describeFailure(job, error),
           source: job.source,
           retryable: job.lastError.retryable,
-        });
-        this.emitReason(job, job.reasons[job.reasons.length - 1]);
+          context: { ...(job.lastError.context as Record<string, unknown> | undefined) },
+        };
+        job.reasons.push(reason);
+        this.emitReason(job, reason);
         job.completion = job.received > 0 ? "partial" : "unknown";
       }
     } finally {
@@ -410,12 +412,14 @@ export class JobManager {
           return;
         }
         if (job.received === 0) throw error;
+        const detail = await this.describeFailure(job, error);
         const reason: ReasonDto = {
           code: "network",
-          message: `第 ${page + 1} 页读取失败，已保留前面结果`,
+          message: `第 ${page + 1} 页读取失败，已保留前面结果：${detail}`,
           source: "wayback",
           page,
           retryable: true,
+          context: { ...(error instanceof AppError ? error.context : {}), stage: "wayback-page" },
         };
         this.addReason(job, reason);
         job.completion = "partial";
@@ -533,10 +537,11 @@ export class JobManager {
       }
       this.addReason(job, {
         code: "network",
-        message: `索引 ${index.id} 页数查询失败`,
+        message: `索引 ${index.id} 页数查询失败：${await this.describeFailure(job, error)}`,
         source: "commoncrawl",
         indexId: index.id,
         retryable: true,
+        context: { ...(error instanceof AppError ? error.context : {}), stage: "cc-page-count" },
       });
       job.completion = "partial";
       return true;
@@ -567,11 +572,12 @@ export class JobManager {
         }
         this.addReason(job, {
           code: "network",
-          message: `索引 ${index.id} 第 ${page + 1} 页读取失败`,
+          message: `索引 ${index.id} 第 ${page + 1} 页读取失败：${await this.describeFailure(job, error)}`,
           source: "commoncrawl",
           indexId: index.id,
           page,
           retryable: true,
+          context: { ...(error instanceof AppError ? error.context : {}), stage: "cc-page" },
         });
         job.completion = "partial";
         return true;
@@ -600,6 +606,25 @@ export class JobManager {
       job.completion = "partial";
     }
     return true;
+  }
+
+  private async describeFailure(job: JobRuntime, error: unknown): Promise<string> {
+    const failure = error instanceof AppError ? error : errorFromUnknown(error, job.source);
+    let text = failure.message || "未知错误";
+    const context = failure.context as Record<string, unknown> | undefined;
+    const kind = String(context?.kind ?? "");
+    if (
+      ["proxy", "network", "timeout", "dns", "tls"].includes(kind) &&
+      this.deps.proxyAdvice
+    ) {
+      try {
+        const advice = await this.deps.proxyAdvice(job.config.proxy.mode);
+        if (advice) text = `${text}；${advice}`;
+      } catch {
+        // advice is diagnostic only
+      }
+    }
+    return text;
   }
 
   private appendRecords(

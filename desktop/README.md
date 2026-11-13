@@ -66,8 +66,8 @@ nativeTheme 切换（不从 emulateMedia 冒充）、真实剪贴板读回、前
 取消终态、连续请求取最后一次、0 条原因空态、配置冻结提示与命中行高亮。
 
 验证记录（2026-11-13，Windows 11 / Node 26.13.0，完整候选 SHA）：`typecheck`、`build` 通过；
-单元 **72 passed**；Electron E2E **29 passed**（`desktop.spec` 4 + `theme-contract` 2 +
-`ui-workspace` 22 + 真实剪贴板原因摘要 1）；独立 acceptance（`75afc8f` + `ccffa32`）
+单元 **79 passed**；Electron E2E **31 passed**（`desktop.spec` 4 + `theme-contract` 2 +
+`ui-workspace` 22 + 真实剪贴板原因摘要 1 + 首次失败 2）；独立 acceptance（`75afc8f` + `ccffa32`）
 **97 tests / 96 pass / 0 fail / 1 skip**；打包 `dist:win` + `verify:packaged`
 **PACKAGED_VERIFY_OK**，独立 packaged/double-click 验收通过。
 
@@ -129,7 +129,12 @@ node tests/integration/run-proxy-nonloopback.mjs
   重定向逐跳校验，只允许官方或配置同源端点；流式 transport 与任务 `RequestOptions`
   使用同一字节预算值。
 - 网络：每任务独立 Electron session 分区，`setProxy` 完成后才请求；代理失败即失败，
-  不回退直连；请求有独立 deadline，取消中止在途请求。
+  不回退直连；请求有独立 deadline，取消中止在途请求。系统代理使用操作系统设置
+  （`resolveProxy` 可核对），环境变量代理只作为提示，不静默改变任务代理。
+- 错误诊断：区分代理连接失败、407/认证、TLS、DNS、429/5xx、超时与响应预算，记录阶段、
+  HTTP 状态、Chromium 错误与尝试次数；429/502/503/504 有界重试（3 次上限，0.75/2s 退避），
+  不无限重试、不失败直连、不关闭 TLS 校验。Common Crawl 上游 5xx 会显示具体 HTTP 状态，
+  不再显示为“没有存档”；直连失败时若检测到系统/环境代理，原因中给出可操作提示。
 - 代理认证：固定代理 URL 中的 `user:pass@` 只用于内存中的每任务凭据，通过 Chromium
   代理挑战（`ClientRequest` 的 `login` 事件）按需应答，且只应答匹配该代理 host:port
   的挑战；代理规则、`ProxySnapshot`、错误文本与日志都不含凭据。SOCKS 认证 Chromium
@@ -156,6 +161,8 @@ IPC 方法：`archive:startQuery`、`archive:cancelQuery`、`archive:getView`、
   默认配置走代理（验收脚本中该场景如实标记为 gap）；真实代理路径由非 loopback
   地址夹具验证，未改变生产 bypass 策略。
 - CC 官方 `from/to` 语义按官方 collinfo 元数据实现，未联网核对真实索引样本。
+- CC 官方索引端点可能返回上游 502/503/504（已实测部分索引持续 504）；应用显示具体
+  HTTP 状态并做有限重试，这不是“没有存档”，需稍后重试或调整范围。
 - 界面在 125% 缩放的 2048×1152 屏幕上以 1202×680、1040×620 内容尺寸实测，
   未在真实 1366×768 物理显示器、100% 缩放下人工走查；macOS/Linux 未验证。
 - 逐行“敏感路径高亮”已接线：`RowView.interesting` 由 domain 规则计算，界面按该标记

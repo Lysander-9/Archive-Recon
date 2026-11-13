@@ -51,6 +51,47 @@ function readTheme(): ThemeState {
   };
 }
 
+function sanitizeProxyEndpoint(value: string): string {
+  return value.replace(/\/\/[^/@\s]+@/g, "//").replace(/\s+/g, " ").trim();
+}
+
+/**
+ * Diagnostic-only hint: when a direct task fails but the OS/env exposes a proxy,
+ * explain how to make the configuration effective. Never changes the task proxy
+ * silently and never prints credentials or the full environment.
+ */
+async function proxyAdvice(mode: string): Promise<string | null> {
+  const systemProxy = await (async (): Promise<string | null> => {
+    try {
+      const resolved = await electronSession.defaultSession.resolveProxy(
+        "https://index.commoncrawl.org",
+      );
+      const match = /^PROXY\s+([^\s;]+)/i.exec(resolved);
+      return match ? sanitizeProxyEndpoint(match[1]) : null;
+    } catch {
+      return null;
+    }
+  })();
+  if (mode === "system" || mode === "fixed") {
+    const label = mode === "system" ? "系统代理" : "固定代理";
+    return systemProxy
+      ? `本次任务使用${label}（${systemProxy}）；若该代理不可用，请在“网络设置”改为直连或填写可用的固定代理`
+      : `本次任务使用${label}；若无法连通，请在“网络设置”改为直连或检查代理地址`;
+  }
+  const envProxy =
+    process.env.HTTPS_PROXY ||
+    process.env.HTTP_PROXY ||
+    process.env.https_proxy ||
+    process.env.http_proxy;
+  if (systemProxy) {
+    return `系统代理可用（${systemProxy}），本次任务使用直连；可在“网络设置”选择系统代理或填写固定代理`;
+  }
+  if (envProxy) {
+    return "检测到环境变量代理，但本次任务使用直连；请在“网络设置”填写该代理或选择系统代理";
+  }
+  return null;
+}
+
 async function handleExport(raw: unknown): Promise<Result<ExportOutcome>> {
   const parsed = validate.validateExport(raw);
   if (!parsed.ok) return parsed;
@@ -91,6 +132,7 @@ function registerIpc(window: BrowserWindow): void {
       allowInsecureCdxApi: TEST_MODE,
     }),
     sessions,
+    proxyAdvice,
     emit: (event: JobEventDto) => {
       if (window.isDestroyed() || window.webContents.isDestroyed()) return;
       window.webContents.send(CHANNELS.jobEvent, event);
