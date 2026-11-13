@@ -17,6 +17,8 @@ from typing import Any, Mapping
 
 import threading
 
+from .incomplete import IncompleteReason
+
 
 class JobStatus(str, Enum):
     PREPARING = "preparing"
@@ -71,11 +73,13 @@ class QueryJob:
 
     job_id: int
     source: str
+    target: str | None = None
     status: JobStatus = JobStatus.PREPARING
     received_count: int = 0
     unique_count: int = 0
     completeness: str = "unknown"
     reason: str = ""
+    reasons: list[dict[str, Any]] = field(default_factory=list)
     started_at: datetime = field(default_factory=datetime.now)
     finished_at: datetime | None = None
     stop_event: threading.Event = field(default_factory=threading.Event, repr=False)
@@ -135,15 +139,30 @@ class QueryJob:
         if self.status is JobStatus.PREPARING:
             self.mark_running()
 
+    def add_reason(self, reason: IncompleteReason | Mapping[str, Any]) -> dict[str, Any]:
+        """登记一条不完整原因；同类（code/index/page）合并计数。"""
+        data = reason.to_dict() if isinstance(reason, IncompleteReason) else dict(reason)
+        key = (data.get("code"), data.get("index_id"), data.get("page"))
+        for existing in self.reasons:
+            if (existing.get("code"), existing.get("index_id"), existing.get("page")) == key:
+                existing["count"] = int(existing.get("count", 0) or 0) + int(
+                    data.get("count", 0) or 0
+                )
+                return existing
+        self.reasons.append(data)
+        return data
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "job_id": self.job_id,
             "source": self.source,
+            "target": self.target,
             "status": self.status.value,
             "received_count": self.received_count,
             "unique_count": self.unique_count,
             "completeness": self.completeness,
             "reason": self.reason,
+            "reasons": [dict(item) for item in self.reasons],
             "started_at": self.started_at.isoformat(timespec="seconds"),
             "finished_at": self.finished_at.isoformat(timespec="seconds") if self.finished_at else None,
         }
@@ -177,14 +196,18 @@ class JobCoordinator:
     def get(self, job_id: int) -> QueryJob | None:
         return self._jobs.get(job_id)
 
-    def start(self, source: str) -> QueryJob:
-        """开始新任务；未结束的旧任务被标记为 stopped（被取代）。"""
+    def start(self, source: str, target: str | None = None) -> QueryJob:
+        """开始新任务；未结束的旧任务被标记为 stopped（被取代）。
+
+        ``target`` 是任务开始时冻结的查询目标，后续事件与请求必须使用它，
+        不允许重新读取界面输入框。
+        """
         previous = self.active_job
         if previous is not None and not previous.is_terminal:
             previous.finish(JobStatus.STOPPED, "被新任务取代")
 
         self._next_id += 1
-        job = QueryJob(job_id=self._next_id, source=source)
+        job = QueryJob(job_id=self._next_id, source=source, target=target)
         self._jobs[job.job_id] = job
         self._active_id = job.job_id
         return job

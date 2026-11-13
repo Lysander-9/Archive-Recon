@@ -108,6 +108,42 @@ class JobOwnershipTests(unittest.TestCase):
         self.assertTrue(self.coordinator.accepts_data(second.job_id))
         self.assertFalse(self.coordinator.accepts_data(first.job_id))
 
+    def test_target_is_frozen_when_the_job_starts(self):
+        job = self.coordinator.start("commoncrawl", target="original.example.com")
+        # 界面输入之后被改写成 new.example.com；任务配置不受影响
+        edited_input = "new.example.com"
+
+        self.assertEqual(job.target, "original.example.com")
+        self.assertEqual(self.coordinator.get(job.job_id).target, "original.example.com")
+        self.assertNotEqual(job.target, edited_input)
+        self.assertEqual(job.to_dict()["target"], "original.example.com")
+
+    def test_job_without_target_stays_none(self):
+        job = self.coordinator.start("wayback")
+
+        self.assertIsNone(job.target)
+        self.assertIsNone(job.to_dict()["target"])
+
+    def test_incomplete_reasons_are_merged_per_code_index_and_page(self):
+        job = self.coordinator.start("commoncrawl", target="example.com")
+
+        job.add_reason({
+            "code": "parse_line", "message": "2 行无法解析",
+            "source": "commoncrawl", "index_id": "CC-MAIN-1", "page": 0, "count": 2,
+        })
+        job.add_reason({
+            "code": "parse_line", "message": "3 行无法解析",
+            "source": "commoncrawl", "index_id": "CC-MAIN-1", "page": 0, "count": 3,
+        })
+        job.add_reason({
+            "code": "page_limit", "message": "达到 5 页上限",
+            "source": "commoncrawl", "index_id": "CC-MAIN-1",
+        })
+
+        self.assertEqual(len(job.reasons), 2)
+        self.assertEqual(job.reasons[0]["count"], 5)
+        self.assertEqual(len(job.to_dict()["reasons"]), 2)
+
     def test_terminal_job_no_longer_accepts_data(self):
         job = self.coordinator.start("wayback")
         self.coordinator.finish_active(JobStatus.PARTIAL, "部分失败")
