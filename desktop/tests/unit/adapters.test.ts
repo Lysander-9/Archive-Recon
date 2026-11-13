@@ -45,6 +45,33 @@ test.describe("Wayback adapter", () => {
     expect(result.records).toEqual([]);
     expect(result.reasons[0].code).toBe("parse_record");
   });
+
+  test("full raw page with one malformed row still reports more pages", async () => {
+    const payload: unknown[][] = [
+      ["urlkey", "timestamp", "original", "mimetype", "statuscode", "digest", "length"],
+    ];
+    for (let index = 0; index < 49; index += 1) {
+      payload.push([
+        `k${index}`,
+        "20240102030405",
+        `https://example.com/${index}`,
+        "text/html",
+        "200",
+        "D",
+        "1",
+      ]);
+    }
+    // One row is shorter than the header and will be counted as a parse issue.
+    payload.push(["short-row"]);
+    const { transport } = fakeTransport([jsonResponse(payload)]);
+    const adapter = new WaybackAdapter({ baseUrl: "http://127.0.0.1:9/cdx" });
+
+    const result = await adapter.queryPage("example.com", 0, 50, options(transport));
+
+    expect(result.records).toHaveLength(49);
+    expect(result.parseSkipped).toBe(1);
+    expect(result.hasMore).toBe(true);
+  });
 });
 
 test.describe("Common Crawl adapter", () => {
