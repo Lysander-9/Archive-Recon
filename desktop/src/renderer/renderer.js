@@ -594,6 +594,18 @@
     $("empty-action-2").classList.add("hidden");
   }
 
+  /** 首次查询就失败（没有旧任务可回滚）时的空态：保留错误提示与可重试入口。 */
+  function showStartFailureEmpty(message) {
+    $("empty-state").classList.remove("hidden");
+    $("empty-title").textContent = "查询未能开始";
+    $("empty-detail").textContent = message || "请检查目标域名或代理设置后重试";
+    $("empty-action").classList.remove("hidden");
+    $("empty-action").textContent = "重新查询";
+    $("empty-action").onclick = startQuery;
+    $("empty-action-2").classList.add("hidden");
+    $("empty-action-2").onclick = null;
+  }
+
   function resetWorkspaceForStart() {
     state.rows = [];
     state.selected = new Set();
@@ -834,6 +846,16 @@
     if (!result.ok) {
       setNotice(describeError(result.error), "error");
       setStatus(previousStatus);
+      if (state.jobId === null) {
+        // 首次查询在创建任务前就失败：没有旧任务可回滚，回到可重试的就绪空态，
+        // 不残留“准备中”。错误信息保留在通知区。
+        $("task-text").textContent = "输入目标域名后开始查询";
+        $("summary").textContent = "匹配 0 / 去重 0 / 接收 0";
+        $("page-range").textContent = "0 条";
+        $("page-label").textContent = "第 0 / 0 页";
+        showStartFailureEmpty(result.error.message || "");
+        return;
+      }
       // 回滚到上一次查询的权威视图（旧任务仍然有效）
       await refresh().catch(() => undefined);
       return;
