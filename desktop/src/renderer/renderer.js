@@ -144,6 +144,35 @@
   }
 
   /* ------------------------------------------------------------------ */
+  /* 主题：以 nativeTheme 通道为权威，媒体查询仅用于桥接就绪前的首屏      */
+  /* ------------------------------------------------------------------ */
+
+  function applyTheme(state) {
+    if (!state) return;
+    const dark = Boolean(state.shouldUseDarkColors);
+    const root = document.documentElement;
+    root.dataset.theme = dark ? "dark" : "light";
+    root.dataset.themeSource = String(state.themeSource || "system");
+  }
+
+  async function initTheme() {
+    applyTheme({
+      shouldUseDarkColors: window.matchMedia("(prefers-color-scheme: dark)").matches,
+      themeSource: "system",
+    });
+    if (!bridge || typeof bridge.getTheme !== "function") return;
+    try {
+      const result = await bridge.getTheme();
+      if (result && result.ok) applyTheme(result.value);
+    } catch {
+      // 保持媒体查询回退
+    }
+    if (typeof bridge.onThemeChanged === "function") {
+      bridge.onThemeChanged((state) => applyTheme(state));
+    }
+  }
+
+  /* ------------------------------------------------------------------ */
   /* 任务状态（唯一来源）                                                  */
   /* ------------------------------------------------------------------ */
 
@@ -429,6 +458,7 @@
     view.rows.forEach((row, index) => {
       const tr = document.createElement("tr");
       tr.dataset.rowId = row.rowId;
+      if (row.interesting) tr.classList.add("interesting");
       if (state.selected.has(row.rowId)) tr.classList.add("selected");
 
       const selectCell = document.createElement("td");
@@ -920,6 +950,39 @@
   /* 事件与绑定                                                            */
   /* ------------------------------------------------------------------ */
 
+  async function copyReasons() {
+    if (!bridge || typeof bridge.copyReasons !== "function") {
+      setNotice("原因摘要复制通道不可用。", "error");
+      return;
+    }
+    if (state.jobId === null) {
+      setNotice("请先完成一次查询后再复制原因。", "error");
+      return;
+    }
+    const result = await bridge.copyReasons({
+      jobId: state.jobId,
+      source: state.source,
+      revision: state.revision,
+    });
+    if (!result.ok) {
+      if (result.error.code === "STALE_VIEW") {
+        setNotice("结果已更新，正在刷新，请稍后重试复制原因。", "error");
+        scheduleRefresh();
+        return;
+      }
+      setNotice(describeError(result.error), "error");
+      return;
+    }
+    const copied = Number(result.value.copiedCount) || 0;
+    if (copied === 0) {
+      // 主进程没有写入剪贴板：不提示复制成功
+      setNotice("本次查询没有未完成原因可复制。", "error");
+      return;
+    }
+    selectElementContents($("reasons-list"));
+    setNotice(`已复制 ${copied} 条未完成原因（共 ${result.value.reasonCount} 项）。`);
+  }
+
   function toggleRangeInputs() {
     const mode = $("range-mode").value;
     $("range-recent").classList.toggle("hidden", mode !== "recent");
@@ -1025,14 +1088,7 @@
 
     $("reasons-button").addEventListener("click", openReasons);
     $("reasons-close").addEventListener("click", () => $("reasons-dialog").close());
-    $("reasons-copy").addEventListener("click", () => {
-      // 原因摘要复制需要主进程剪贴板通道（尚未交付），不得提示成功。
-      selectElementContents($("reasons-list"));
-      setNotice(
-        "原因摘要复制尚未接通主进程剪贴板通道；已选中原因文本，可手动 Ctrl+C 复制。",
-        "error",
-      );
-    });
+    $("reasons-copy").addEventListener("click", () => void copyReasons());
 
     $("range-mode").addEventListener("change", () => {
       toggleRangeInputs();
@@ -1108,6 +1164,7 @@
     renderEmpty(null);
     updateConfigHint();
     bind();
+    void initTheme();
   }
 
   boot();

@@ -465,30 +465,49 @@ test("字号只改变表格，不移动固定区", async () => {
   await page.selectOption('[data-testid="font-size"]', "default");
 });
 
-test("浅色/深色主题跟随系统偏好", async () => {
+interface ThemeFacts {
+  theme: string;
+  source: string;
+  body: string;
+  surface: string;
+  text: string;
+}
+
+async function themeFacts(): Promise<ThemeFacts> {
+  return (await page.evaluate(`(() => ({
+    theme: document.documentElement.dataset.theme || "",
+    source: document.documentElement.dataset.themeSource || "",
+    body: getComputedStyle(document.body).backgroundColor,
+    surface: getComputedStyle(document.querySelector(".workspace")).backgroundColor,
+    text: getComputedStyle(document.body).color,
+  }))()`)) as ThemeFacts;
+}
+
+async function setNativeTheme(source: "system" | "light" | "dark"): Promise<void> {
+  await app.evaluate(({ nativeTheme }, value) => {
+    nativeTheme.themeSource = value;
+  }, source);
+}
+
+test("nativeTheme 切换驱动页面 token（不使用 emulateMedia）", async () => {
   await runWayback();
-
-  const readTheme = async (): Promise<{ body: string; surface: string; text: string }> =>
-    (await page.evaluate(`(() => ({
-      body: getComputedStyle(document.body).backgroundColor,
-      surface: getComputedStyle(document.querySelector(".workspace")).backgroundColor,
-      text: getComputedStyle(document.body).color,
-    }))()`)) as { body: string; surface: string; text: string };
-
-  await page.emulateMedia({ colorScheme: "light" });
-  await page.waitForTimeout(160);
-  const light = await readTheme();
-
-  await page.emulateMedia({ colorScheme: "dark" });
-  await page.waitForTimeout(160);
-  const dark = await readTheme();
-
-  expect(light.body).not.toBe(dark.body);
-  expect(light.surface).not.toBe(dark.surface);
-  expect(light.text).not.toBe(dark.text);
+  await setNativeTheme("dark");
+  await expect.poll(async () => (await themeFacts()).theme).toBe("dark");
+  const dark = await themeFacts();
+  expect(dark.source).toBe("dark");
   expect(dark.body).toBe("rgb(14, 21, 35)");
   expect(dark.surface).toBe("rgb(23, 32, 51)");
+
+  await setNativeTheme("light");
+  await expect.poll(async () => (await themeFacts()).theme).toBe("light");
+  const light = await themeFacts();
+  expect(light.source).toBe("light");
+  expect(light.body).toBe("rgb(244, 247, 251)");
+  expect(light.surface).toBe("rgb(255, 255, 255)");
+  expect(light.body).not.toBe(dark.body);
   expect((await layoutFacts()).footerVisible).toBe(true);
+
+  await setNativeTheme("system");
 });
 
 test("勾选行复制仅包含所选，全选覆盖当前页", async () => {
@@ -607,21 +626,25 @@ test("取不到记录但存在未完成原因时空态不宣称没有存档，�
   await page.keyboard.press("Escape");
 });
 
-test("原因摘要复制在通道交付前不提示成功", async () => {
+test("原因摘要复制走受限通道：清空剪贴板后写入原因内容", async () => {
   await page.selectOption('[data-testid="source-select"]', "commoncrawl");
   await page.selectOption('[data-testid="range-mode"]', "all");
-  await page.fill('[data-testid="target-input"]', "empty.example.com");
+  await page.fill('[data-testid="target-input"]', "example.com");
   await page.click('[data-testid="start-button"]');
   await expect(page.locator('[data-testid="status-chip"]')).toHaveText("部分完成", { timeout: 30_000 });
 
-  await app.evaluate(({ clipboard }) => clipboard.writeText("SENTINEL"));
+  await app.evaluate(({ clipboard }) => clipboard.clear());
+  expect(await app.evaluate(({ clipboard }) => clipboard.readText())).toBe("");
+
   await page.click('[data-testid="reasons-button"]');
   await expect(page.locator("#reasons-dialog")).toBeVisible();
   await page.click("#reasons-copy");
+  await expect(page.locator('[data-testid="notice"]')).toContainText(/已复制 \d+ 条未完成原因/);
 
-  await expect(page.locator('[data-testid="notice"]')).toContainText("尚未接通主进程剪贴板通道");
-  await expect(page.locator('[data-testid="notice"]')).not.toContainText("已复制");
-  expect(await app.evaluate(({ clipboard }) => clipboard.readText())).toBe("SENTINEL");
+  const copied = (await app.evaluate(({ clipboard }) => clipboard.readText())) as string;
+  expect(copied).toContain("parse_line");
+  expect(copied).toContain("无法解析");
+  expect(copied.split("\r\n").length).toBeGreaterThanOrEqual(1);
   await page.keyboard.press("Escape");
 });
 
@@ -660,15 +683,49 @@ test("快速连续翻页以最后一次请求为准（旧响应不覆盖新视�
   await page.selectOption('[data-testid="page-size"]', "50");
 });
 
-test("状态色块对比度不低于 4.5（CSS 渲染检查，非系统主题验收）", async () => {
+test("未启用敏感筛选时命中行仍高亮，浅深色 token 均生效", async () => {
+  await runWayback();
+  await page.selectOption('[data-testid="page-size"]', "100");
+  // 60 条中 9 条命中；每页 100 条以便一次看清
+  await expect(page.locator("#rows-body tr.interesting")).toHaveCount(9);
+  await expect(page.locator('[data-testid="filter-interesting"]')).not.toBeChecked();
+
+  const readRowBackgrounds = async (): Promise<{ interesting: string; normal: string }> =>
+    (await page.evaluate(`(() => {
+      const interestingRow = document.querySelector("#rows-body tr.interesting");
+      const normalRow = Array.from(document.querySelectorAll("#rows-body tr")).find((row) => !row.classList.contains("interesting"));
+      return {
+        interesting: getComputedStyle(interestingRow).backgroundColor,
+        normal: getComputedStyle(normalRow).backgroundColor,
+      };
+    })()`)) as { interesting: string; normal: string };
+
+  const light = await readRowBackgrounds();
+  expect(light.interesting).not.toBe(light.normal);
+
+  await setNativeTheme("dark");
+  await expect.poll(async () => (await themeFacts()).theme).toBe("dark");
+  const dark = await readRowBackgrounds();
+  expect(dark.interesting).not.toBe(dark.normal);
+  expect(dark.interesting).not.toBe(light.interesting);
+
+  // 开启敏感筛选后，所有可见行都是命中行
+  await page.check('[data-testid="filter-interesting"]');
+  await expect(page.locator("#rows-body tr.interesting")).toHaveCount(9);
+  await page.uncheck('[data-testid="filter-interesting"]');
+  await page.selectOption('[data-testid="page-size"]', "50");
+  await setNativeTheme("system");
+});
+
+test("状态色块对比度不低于 4.5（nativeTheme 切换下实算）", async () => {
   await runWayback();
 
-  await page.emulateMedia({ colorScheme: "light" });
-  await page.waitForTimeout(200);
+  await setNativeTheme("light");
+  await expect.poll(async () => (await themeFacts()).theme).toBe("light");
   expect(await chipContrast()).toBeGreaterThanOrEqual(4.5);
 
-  await page.emulateMedia({ colorScheme: "dark" });
-  await page.waitForTimeout(200);
+  await setNativeTheme("dark");
+  await expect.poll(async () => (await themeFacts()).theme).toBe("dark");
   expect(await chipContrast()).toBeGreaterThanOrEqual(4.5);
 
   // 部分完成（暖色块）在深色下同样达标
@@ -677,8 +734,7 @@ test("状态色块对比度不低于 4.5（CSS 渲染检查，非系统主题验
   await page.fill('[data-testid="target-input"]', "example.com");
   await page.click('[data-testid="start-button"]');
   await expect(page.locator('[data-testid="status-chip"]')).toHaveText("部分完成", { timeout: 30_000 });
-  await page.waitForTimeout(200);
   expect(await chipContrast()).toBeGreaterThanOrEqual(4.5);
 
-  await page.emulateMedia({ colorScheme: "light" });
+  await setNativeTheme("system");
 });
