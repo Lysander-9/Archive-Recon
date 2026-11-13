@@ -1,0 +1,38 @@
+{
+  "sha": "0859d1f",
+  "acceptanceSet": "5681a83 (75afc8f + R7)",
+  "capturedAt": "2026-11-13",
+  "command": "node acceptance/run-acceptance.mjs",
+  "tests": 97,
+  "pass": 96,
+  "fail": 0,
+  "skipped": 1,
+  "failures": [],
+  "skipped": ["clean Windows ZIP without Node/Python"],
+  "proxy": {
+    "http": "pass",
+    "httpAuth": "pass authorized=1",
+    "socks5": "pass",
+    "socks5Auth": "rejected before start (PROXY), origin/socks hits 0",
+    "failureNoDirect": "pass",
+    "loopbackDefaultBypass": "gap"
+  },
+  "build": {
+    "typecheck": "pass",
+    "distWin": "pass",
+    "localZipBytes": 153301281,
+    "localZipSha256": "87d3dfb38530c3cf0c7e4d414133f924fa1fae9d35308e3452a486bc49aee10a",
+    "unit": "63 passed",
+    "e2e": "18 passed"
+  },
+  "packaged": {
+    "status": "完成",
+    "rows": 3,
+    "ok": true,
+    "doubleClickWaybackHits": 1
+  },
+  "notes": [
+    "Theme/interesting/copyReasons contracts exist; renderer not yet wired, so no UI pass claimed",
+    "Final renderer integration SHA requires retest"
+  ]
+}

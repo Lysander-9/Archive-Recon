@@ -183,6 +183,7 @@ export function createFixtureTransport(options: TransportOptions = {}): FixtureT
 export interface ManagerOptions {
   clockUtc?: string;
   proxy?: { mode: "direct" | "system" | "fixed"; server?: string };
+  budgets?: Record<string, number>;
 }
 
 export interface ManagerHarness {
@@ -222,6 +223,7 @@ export function createManager(transport: FixtureTransport | { fetch: Function },
       },
     },
     emit: (event: any) => events.push(event),
+    budgets: options.budgets,
   });
 
   const harness: ManagerHarness = {
@@ -276,6 +278,7 @@ export function createManagerWithSessions(
     commoncrawl: new CommonCrawlAdapter({ indexBaseUrl: "http://fixture.local/cc" }),
     sessions,
     emit: (event: any) => events.push(event),
+    budgets: options.budgets,
   });
   const harness: ManagerHarness = {
     manager,

@@ -18,6 +18,7 @@ import { buildProxyConfig } from "../../src/main/adapters/proxy";
 interface Result {
   id: string;
   ok: boolean;
+  gap?: boolean;
   detail: string;
   originHits?: number;
   proxyHits?: number;
@@ -208,6 +209,21 @@ async function fetchVia(
   }
 }
 
+async function createOnly(proxy: any): Promise<{ ok: boolean; code?: string; message?: string }> {
+  const sessions = createElectronSessions();
+  try {
+    await sessions.create(1, proxy);
+    await sessions.close(1).catch(() => undefined);
+    return { ok: false, message: "session was created unexpectedly" };
+  } catch (error) {
+    return {
+      ok: true,
+      code: (error as any)?.code,
+      message: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
 async function run(): Promise<void> {
   await app.whenReady();
 
@@ -240,6 +256,7 @@ async function run(): Promise<void> {
   results.push({
     id: "loopback-default-config",
     ok: false,
+    gap: true,
     detail: `production config bypasses loopback: originHits=${origin.hits() - defaultBefore}, proxyHits=${plainProxy.hits()}; this is a test-environment gap, not a granted success`,
     originHits: origin.hits() - defaultBefore,
     proxyHits: plainProxy.hits(),
@@ -289,19 +306,22 @@ async function run(): Promise<void> {
   });
 
   const socksAuthBefore = origin.hits();
-  const socksAuthResult = await fetchVia(
-    { mode: "fixed", server: `socks5://acceptance:secret@127.0.0.1:${socksAuthPort}` },
-    originUrl,
-    true,
-  );
+  const socksAuthProxyBefore = socksAuth.hits();
+  const socksAuthRejection = await createOnly({
+    mode: "fixed",
+    server: `socks5://acceptance:secret@127.0.0.1:${socksAuthPort}`,
+  });
+  const socksAuthHits = socksAuth.hits() - socksAuthProxyBefore;
+  const socksAuthOriginHits = origin.hits() - socksAuthBefore;
   results.push({
-    id: "socks5-auth",
-    ok: socksAuthResult.ok && socksAuth.hits() > 0,
-    detail: socksAuthResult.ok
-      ? `status ok; socksHits=${socksAuth.hits()}`
-      : `error=${socksAuthResult.error}`,
-    originHits: origin.hits() - socksAuthBefore,
-    proxyHits: socksAuth.hits(),
+    id: "socks5-auth-rejected",
+    ok: socksAuthRejection.ok && socksAuthRejection.code === "PROXY" &&
+      socksAuthHits === 0 && socksAuthOriginHits === 0,
+    detail: socksAuthRejection.ok
+      ? `rejected before start; code=${socksAuthRejection.code}; originHits=${socksAuthOriginHits}; socksHits=${socksAuthHits}`
+      : `unexpected: ${socksAuthRejection.message}`,
+    originHits: socksAuthOriginHits,
+    proxyHits: socksAuthHits,
   });
 
   const failureBefore = origin.hits();
@@ -320,7 +340,7 @@ async function run(): Promise<void> {
 
   console.log(`PROXY_ACCEPTANCE_RESULT ${JSON.stringify({ results })}`);
   await closeAll();
-  app.exit(results.every((item) => item.ok) ? 0 : 1);
+  app.exit(results.every((item) => item.ok || item.gap) ? 0 : 1);
 }
 
 run().catch(async (error) => {
