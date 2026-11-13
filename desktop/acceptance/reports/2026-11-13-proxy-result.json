@@ -1,0 +1,49 @@
+{
+  "sha": "a417955",
+  "capturedAt": "2026-11-13",
+  "command": "node_modules/electron/dist/electron.exe acceptance/proxy/generated/run-proxy-acceptance.cjs",
+  "results": [
+    {
+      "id": "loopback-default-config",
+      "ok": false,
+      "detail": "production config bypasses loopback: originHits=1, proxyHits=0; test-environment gap",
+      "originHits": 1,
+      "proxyHits": 0
+    },
+    {
+      "id": "http-proxy",
+      "ok": true,
+      "detail": "status ok; proxyHits=1",
+      "originHits": 2,
+      "proxyHits": 1
+    },
+    {
+      "id": "http-proxy-auth",
+      "ok": false,
+      "detail": "error=net::ERR_NO_SUPPORTED_PROXIES; authorized=0",
+      "originHits": 0,
+      "proxyHits": 0
+    },
+    {
+      "id": "socks5-proxy",
+      "ok": true,
+      "detail": "status ok; socksHits=1",
+      "originHits": 1,
+      "proxyHits": 1
+    },
+    {
+      "id": "socks5-auth",
+      "ok": false,
+      "detail": "error=net::ERR_NO_SUPPORTED_PROXIES",
+      "originHits": 0,
+      "proxyHits": 0
+    },
+    {
+      "id": "proxy-failure-no-direct",
+      "ok": true,
+      "detail": "error=net::ERR_PROXY_CONNECTION_FAILED",
+      "originHits": 0,
+      "proxyHits": 0
+    }
+  ]
+}

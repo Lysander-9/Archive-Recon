@@ -1,0 +1,3 @@
+harness/generated/
+proxy/generated/
+*.log

@@ -1,0 +1,48 @@
+{
+  "sha": "a417955",
+  "capturedAt": "2026-11-13",
+  "command": "node acceptance/run-acceptance.mjs",
+  "tests": 54,
+  "pass": 49,
+  "fail": 4,
+  "skipped": 1,
+  "failures": [
+    {
+      "id": "T1-percent-host",
+      "test": "T1: path/query/fragment/port/userinfo/whitespace/percent/backslash are rejected",
+      "actual": "normalizeTarget('exa%6Dple.com') accepted",
+      "expected": "INVALID_INPUT"
+    },
+    {
+      "id": "T3-utc-parse",
+      "test": "T3: no-timezone official timestamps are treated as UTC (fixed TZ probe)",
+      "actual": "local-time interpretation (UTC+8 shift)",
+      "expected": "UTC interpretation"
+    },
+    {
+      "id": "T3-month-boundary",
+      "test": "T3: a UTC month boundary index is not included by a local-time shift",
+      "actual": "CC-MAIN-BOUNDARY included in 2024-10",
+      "expected": "excluded"
+    },
+    {
+      "id": "T3-cross-month",
+      "test": "T3: cross-month indexes are selected in each intersecting natural month",
+      "actual": "2025-05 missed CC-MAIN-2025-18",
+      "expected": "CC-MAIN-2025-18 selected"
+    }
+  ],
+  "skipped": [
+    "T6: packaged Windows ZIP without Node/Python is not yet verifiable (no clean environment)"
+  ],
+  "build": {
+    "typecheck": "pass",
+    "build": "pass",
+    "devUnit": "42 passed",
+    "devElectronE2E": "4 passed",
+    "distWin": "pass",
+    "localZipBytes": 153298746,
+    "localZipSha256": "c226f42d4baa7544820654629c6e3bb5c4c8df140bd04d326768b96278a2af40",
+    "packagedVerify": "PACKAGED_VERIFY_OK on second run (first run row-count race)"
+  }
+}
