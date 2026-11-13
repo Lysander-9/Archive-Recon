@@ -1,0 +1,5 @@
+[
+  ["urlkey", "timestamp", "original", "mimetype", "statuscode", "digest", "length"],
+  ["com,example)/", "20230102030405", "https://example.com/", "text/html", "200", "WB-DIGEST-6", "256"],
+  ["com,example)/login", "20240506070809", "https://example.com/login", "text/html", "200", "WB-DIGEST-7", "1024"]
+]
