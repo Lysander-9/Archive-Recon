@@ -133,7 +133,7 @@ python -m unittest discover -s tests -v
 | GUI 框架 | CustomTkinter 6.0+（基于 tkinter） |
 | 表格组件 | ttk.Treeview |
 | HTTP 请求 | requests |
-| 数据处理 | pandas |
+| 数据模型 / 结果集合 / 导出 | 标准库（`archrecon` 包） |
 | 并发查询 | threading + threading.Event（可取消） |
 
 ## API 说明

@@ -414,6 +414,7 @@ class ArchiveAPIClient:
             "length": record.get("length", "") or "0",
             "file_type": (record.get("mimetype", "") or "unknown").split(";")[0].strip(),
             "timestamp": ArchiveAPIClient._fmt_timestamp(record.get("timestamp", "")),
+            "raw_timestamp": record.get("timestamp", "") or "",
             "source": "wayback",
         }
 
@@ -425,6 +426,7 @@ class ArchiveAPIClient:
             "length": record.get("length", "") or "0",
             "file_type": (record.get("mime", "") or "unknown").split(";")[0].strip(),
             "timestamp": ArchiveAPIClient._fmt_timestamp(record.get("timestamp", "")),
+            "raw_timestamp": record.get("timestamp", "") or "",
             "source": "commoncrawl",
         }
 
