@@ -1,155 +1,89 @@
-# 渗透测试信息搜集工具
+# Archive Recon
 
-Archive-Recon 是一个基于 Wayback Machine 和 Common Crawl 的网页存档数据搜集 GUI 工具，用于渗透测试前期信息收集阶段，快速检索目标域名的历史 URL、状态码、文件类型等存档记录。项目不依赖任何本机固定路径，克隆后即可在 Windows / macOS / Linux 上运行。
+面向目标域名的历史 URL 检索与整理桌面工具：同时查询 **Wayback Machine CDX** 与 **Common Crawl 索引**，把结果整理成可筛选、可排序、可导出的唯一 URL 清单。用于渗透测试前期信息收集与历史资产梳理。
 
-## 功能特性
+当前产品为 **TypeScript / Electron 桌面应用（Windows x64）**，运行时不依赖 Python、Node 或浏览器运行时。
 
-### 数据源
-- **Wayback Machine CDX API** — 查询 `web.archive.org` 存档的目标域名历史快照
-- **Common Crawl Index API** — 查询 `index.commoncrawl.org` 按月索引的网页爬取记录
-- 页数通过 `showNumPages` 查询；`pageSize` 表示压缩索引块数，不是 URL 条数。每个索引最多读取 5 页，超出时标记为部分结果。
+> 旧版 Python + Tkinter 实现已停止维护，自本次发布起由 Electron 版取代。旧源码完整保留在 Git 历史与备份分支 `backup/main-pre-ts-electron-20261113` 中，旧设计文档归档在 `docs/archive/superpowers/`。
 
-### 查询能力
-- 支持泛域名查询（`*.example.com` 匹配所有子域）
-- 两个数据源可独立查询，互不阻塞
-- Wayback Machine：流式分页加载，每页 50 条，最多 20 页（1000 条），支持随时停止
-- Common Crawl：按索引逐月加载，滚动到底部自动加载下一个索引；支持按时间范围筛选（最近 N 个月 / 指定年月 / 全部时间）
+## 下载与运行（使用者）
 
-### 结果展示与筛选
-- 表格展示：行号、快照时间、状态码、长度、文件类型、完整 URL
-- 列排序：点击列标题切换升序/降序，带 ▲/▼ 箭头指示
-- 列宽自适应：根据当前页内容自动调整列宽，URL 列拉伸填满剩余空间
-- 多维度筛选：
-  - 状态码（下拉选择 + 手动输入，支持逗号多值和 `!` 排除）
-  - 文件类型（下拉选择 + 模糊匹配）
-  - URL 关键词（支持 `!` 排除）
-  - 域名（下拉自动填充查询结果中的子域名及条目数量，支持泛域匹配）
-- 敏感文件高亮：自动识别 37 种敏感路径模式（`.env`、`.bak`、`.git/config`、`wp-config.php`、`.sql`、`.pem` 等），以金色背景标注
-- 字体缩放：小 / 默认 / 中 / 大 / 超大 五档可选
+1. 打开 [Releases](https://github.com/Lysander-9/Archive-Recon/releases) 页面，下载 `ArchiveRecon-<版本>-win-x64.zip`。
+2. 解压到任意本地目录。**必须保留整个目录**（`resources/`、`locales/` 与 `Archive Recon.exe` 需在同一目录），不能只复制 exe。
+3. 双击运行 `Archive Recon.exe`。
 
-### 分页与导出
-- 每页行数可选：20 / 50 / 100 / 200 / 500 / 1000
-- 页码跳转：输入页码 + GO 按钮，支持回车确认
-- 导出 CSV / JSON（导出当前筛选后的全部结果）
+- 支持：Windows 10 / 11 x64。macOS / Linux 未构建、未验证，不作支持承诺。
+- 当前发布版本 `0.1.0` 未做代码签名，Windows SmartScreen 可能提示"未知发布者"；请先用下面的 SHA-256 校验文件。
+- 首次启动会创建用户数据目录（Electron 默认位置），不写入安装目录。
 
-### 界面与桌面适配
-- 根据当前屏幕分辨率自动计算初始窗口尺寸，并在桌面居中显示
-- 最小窗口尺寸会根据可用屏幕空间动态调整，兼顾常见桌面与较小分辨率
-- 查询区采用双行卡片布局，将输入项、运行状态和查询操作分层展示
-- 筛选区采用可伸缩网格布局，窗口尺寸变化时输入框可自动分配宽度
-- 统一输入框、按钮、标签页、表格、分页栏的颜色、圆角、边框、字体和间距
-- 支持 CustomTkinter 系统外观模式，分别适配浅色和深色桌面主题
-- 表格包含统一表头、选中状态和敏感结果高亮样式
+校验下载文件（PowerShell）：
 
-### 其他
-- 代理支持：HTTP / HTTPS / SOCKS 代理，可随时切换；默认值读取系统 `HTTPS_PROXY` / `HTTP_PROXY` 环境变量，未设置时留空直连
-- 复制功能：`Ctrl+C` 复制选中行 URL，右键菜单支持「复制 URL」和「复制整行数据」
-- 自定义可滚动下拉组件（`ScrollableComboBox`），解决 CTkComboBox 下拉列表无法滚动的问题
-
-## 体验与查询说明
-
-- 常用筛选项保持在工具栏中，域名筛选等较少使用的选项收纳在「高级筛选」中；敏感路径可一键筛出。
-- 查询前会检查域名格式；无结果、筛选无匹配、索引失败和部分结果都有对应提示。
-- Common Crawl 使用服务端 `showNumPages` 元数据确定分页。`pageSize` 代表压缩索引块数，并非 URL 条数；每个索引最多读取 5 页，超过上限会标记为部分结果。
-- Common Crawl 请求按索引串行执行，分页请求之间至少等待 1 秒，以降低连续请求压力。
-- CSV / JSON 导出的是当前筛选条件匹配的全部记录，不限于表格当前页。
-- Windows 启动脚本按「项目 `.venv` → `py -3` → `python`」的顺序自动查找 Python，并在启动前检查 Tkinter 和项目依赖；不包含任何本机固定路径。macOS / Linux 使用 `start.sh`。
-
-## 环境要求
-
-- Python 3.10+
-- Windows：Python 安装需包含 Tcl/Tk（`tkinter`）；精简或嵌入式 Python 环境通常不带此组件。
-- Windows / macOS / Linux（需支持 GUI 显示）
-
-## 安装
-
-```bash
-# 克隆仓库
-git clone https://github.com/Lysander-9/Archive-Recon.git
-cd Archive-Recon
-
-# 创建虚拟环境（推荐）
-uv venv .venv
-
-# Windows：使用包含 Tcl/Tk 的 Python 3.10+
-uv pip install --python .venv\Scripts\python.exe -r requirements.txt
-
-# macOS / Linux：将路径替换为 .venv/bin/python
-# uv pip install --python .venv/bin/python -r requirements.txt
+```powershell
+Get-FileHash .\ArchiveRecon-0.1.0-win-x64.zip -Algorithm SHA256
+# 0.1.0: 58DFCE82DC69848B0675672AC2097392CA8E24EF2F77A22EFD5C758E82F1C08C
 ```
 
-## 使用方法
+## 功能
 
-### 启动
+- **两个来源**：Wayback Machine CDX API 与 Common Crawl 索引（官方 `collinfo.json` + `cdx-api`）。
+- **匹配范围**：查询目标主机及其全部子域；`*.example.com` 是输入别名，与裸域等价。范围说明会在界面显示，不承诺完整收录。
+- **目标校验**：拒绝路径、查询串、片段、端口、用户信息与内部空白；非法输入在发起任何网络请求前被拒。
+- **时间范围**：最近 N 个自然月、指定年月、全部时间。自然月按 UTC `[月初, 下月初)` 计算，时钟在任务开始时冻结；Common Crawl 只按官方 `from/to` 区间相交选择已发布索引，不从索引 ID 推断月份；元数据缺失/非法/倒置时明确标注"范围未知"。
+- **结果整理**：按完整 URL 首条去重（同批与跨批），筛选作用于全部结果并保持追加时的筛选与排序，排序稳定，分页与筛选条件一致。
+- **导出**：CSV / JSON，固定五字段 `timestamp,status_code,length,file_type,url`，始终导出当前筛选排序下的全量快照；CSV 为 UTF-8 BOM + CRLF；内部 `source`/`rawTimestamp`/`indexId` 与界面行号不导出；同目录临时文件 + rename 原子写入。
+- **任务语义**：单任务串行；`jobId/source/seq/revision` 归属校验；每个任务只发一次终态；停止保留已收记录并落唯一终态；旧任务与跨来源事件不会写入新集合；窗口关闭先取消再停止调度。
+- **网络与代理**：直连 / 系统代理 / 固定代理（HTTP、HTTPS、SOCKS），每个任务独立 Electron session 分区，`setProxy` 完成后才发起请求；代理失败即失败，**不静默回退直连**；请求有独立 deadline，取消会中止在途请求。
+- **查询预算（未扩大）**：Wayback ≤ 20 页 × 50 条；Common Crawl 每索引 ≤ 5 页、`pageSize=5`（索引块单位）。达到上限时明确标记为部分结果并给出原因。
 
-```bash
-.venv\Scripts\python.exe main.py
+## 从源码构建（开发者）
+
+前置：Windows x64、Node **26.13.0**、npm **11.20.0**（见 `desktop/package.json` 的 `engines`）。依赖版本已锁定：Electron 45.3.1、TypeScript 7.0.2、esbuild 0.28.2、electron-builder 26.18.0、Playwright Test 1.65.0。
+
+```powershell
+cd desktop
+npm ci                    # 按 package-lock.json 安装；electron/esbuild 安装脚本已在 allowScripts 中批准
+npm run typecheck
+npm test                  # 单元测试（Playwright Test runner，离线）
+npm run build
+npm run test:e2e          # Electron 真实窗口 + 本地环回夹具，不访问外部目标
+npm run dist:win          # 产出 desktop/release/win-unpacked 与 ArchiveRecon-<ver>-win-x64.zip
+npm run verify:packaged   # 用打包后的 exe 跑一次离线数据流，输出 PACKAGED_VERIFY_OK
 ```
 
-Windows 用户也可双击 `start.bat` 启动，macOS / Linux 用户运行 `./start.sh`。两个脚本都会优先使用项目 `.venv`，并在启动前检查 Tkinter 和所需依赖；找不到可用环境时会打印具体的安装命令而不是静默失败。
+Windows 用户也可在仓库根目录双击 `start.bat`：它只在本地已存在 `desktop\release\win-unpacked\Archive Recon.exe` 时启动该产物，否则打印下载/构建指引（不会回退到任何 Python 入口）。
 
-### 基本操作
+首次安装需要联网；构建产物与 `node_modules` 均不入库（见 `.gitignore`）。
 
-1. 在顶部输入「目标域名」（如 `example.com` 或 `*.example.com`）
-2. 如需代理，展开「网络设置」，填入代理地址并点击「应用代理」
-3. 点击 **Wayback 查询** 或 **Common Crawl 查询** 开始检索
-4. 结果加载完成后，使用工具栏筛选、排序、搜索
-5. 可导出为 CSV 或 JSON 文件
+## 目录结构
 
-### 筛选语法
-
-| 筛选项 | 说明 | 示例 |
-|--------|------|------|
-| 状态码 | 下拉选择或手动输入，逗号分隔多值 | `200,301,404` |
-| 状态码排除 | `!` 前缀排除指定值 | `!404,!500` |
-| 文件类型 | 下拉选择或手动输入，模糊匹配 | `text/html` |
-| URL 搜索 | 关键词匹配，支持排除 | `admin` 或 `!static` |
-| 域名 | 下拉选择（自动填充）或手动输入 | `www.example.com` 或 `!cdn.example.com` |
-
-## 项目结构
-
-```
-Archive-Recon/
-├── main.py              # GUI 主程序（CustomTkinter）
-├── api_client.py        # Wayback CDX & Common Crawl API 客户端
-├── requirements.txt     # Python 依赖
-├── start.bat            # Windows 启动脚本（自动查找 Python）
-├── start.sh             # macOS / Linux 启动脚本
-├── tests/               # 单元测试（unittest）
-├── docs/                # 设计与实现记录
-└── README.md
+```text
+desktop/
+  package.json / package-lock.json   锁定的工具链与构建脚本
+  electron-builder.json              打包配置（zip 目标、asar、files 白名单）
+  src/contracts                      版本化 IPC DTO、通道名、运行时校验
+  src/domain                         目标校验、UTC 月份、CC 官方区间、结果集合/筛选/排序
+  src/application                    任务状态机、冻结配置、事件归属、导出快照
+  src/main                           Electron 生命周期、IPC 处理、session 代理隔离、适配器、五字段导出
+  src/preload                        白名单 contextBridge
+  src/renderer                       界面（HTML/CSS/JS，经 preload 白名单访问主进程能力）
+  tests/unit                         离线单元测试
+  tests/e2e                          Electron 端到端（本地环回夹具）
+  scripts                            构建、清理、打包后验证
+docs/archive/superpowers/            旧 Python 版设计与计划文档（仅历史参考）
 ```
 
-## 测试
+IPC 面：`archive:startQuery`、`archive:cancelQuery`、`archive:getView`、`archive:exportResults`、`archive:copySelection`，事件通道 `archive:jobEvent`。所有入参在 main 进程做运行时校验，统一返回 `{ok:true,value}` / `{ok:false,error}`。
 
-```bash
-python -m unittest discover -s tests -v
-```
+## 已知限制
 
-## 技术栈
+- 仅 Windows x64 构建；未签名、无安装器（NSIS/MSI），以目录 ZIP 分发。
+- 代理功能已实现配置、隔离与失败路径；**尚未**用真实 HTTP/SOCKS/认证代理服务做连通性实测。
+- Common Crawl 时间语义按官方 `from/to` 元数据实现，未联网核对全部历史索引样本。
+- 旧 Python 版本的行为兼容仅限五字段导出契约；其余交互以本版本为准。
 
-| 组件 | 技术 |
-|------|------|
-| GUI 框架 | CustomTkinter 6.0+（基于 tkinter） |
-| 表格组件 | ttk.Treeview |
-| HTTP 请求 | requests |
-| 数据处理 | pandas |
-| 并发查询 | threading + threading.Event（可取消） |
+## 历史版本
 
-## API 说明
-
-### Wayback Machine CDX API
-
-- 端点：`https://web.archive.org/cdx/search/cdx`
-- 参数：`url`、`matchType`、`output=json`、`fl=timestamp,original,statuscode,length,mimetype`、`collapse=urlkey`
-- 匹配模式：`domain`（匹配域名及所有子域）
-
-### Common Crawl Index API
-
-- 索引列表：`https://index.commoncrawl.org/collinfo.json`
-- 单索引查询：`https://index.commoncrawl.org/{index_id}-index?url=*.example.com&output=json&page=0`
-- 按时间范围筛选可用索引（最近 N 个月 / 指定年月 / 全部）
-
-## 许可证
-
-MIT License
+| 版本 | 说明 |
+|---|---|
+| 0.1.0（当前） | TypeScript / Electron 重写，Windows x64 ZIP，未签名 |
+| Python 版（已停止维护） | 旧 `main.py` + CustomTkinter 实现；源码见 Git 历史与 `backup/main-pre-ts-electron-20261113` |
