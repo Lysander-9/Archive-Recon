@@ -1,0 +1,34 @@
+[
+  {
+    "id": "CC-MAIN-2099-99",
+    "name": "Synthetic valid range labeled October 2024",
+    "cdx-api": "https://index.commoncrawl.org/CC-MAIN-2099-99-index",
+    "from": "2024-10-03T09:40:20",
+    "to": "2024-10-16T09:12:31"
+  },
+  {
+    "id": "CC-MAIN-2099-01",
+    "name": "Synthetic missing range",
+    "cdx-api": "https://index.commoncrawl.org/CC-MAIN-2099-01-index"
+  },
+  {
+    "id": "CC-MAIN-2099-02",
+    "name": "Synthetic invalid from",
+    "cdx-api": "https://index.commoncrawl.org/CC-MAIN-2099-02-index",
+    "from": "not-a-date",
+    "to": "2024-10-10T00:00:00"
+  },
+  {
+    "id": "CC-MAIN-2099-03",
+    "name": "Synthetic inverted range",
+    "cdx-api": "https://index.commoncrawl.org/CC-MAIN-2099-03-index",
+    "from": "2024-10-20T00:00:00",
+    "to": "2024-10-01T00:00:00"
+  },
+  {
+    "id": "CC-MAIN-2099-04",
+    "name": "Synthetic missing to",
+    "cdx-api": "https://index.commoncrawl.org/CC-MAIN-2099-04-index",
+    "from": "2024-10-01T00:00:00"
+  }
+]

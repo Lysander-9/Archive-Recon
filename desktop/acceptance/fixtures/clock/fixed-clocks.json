@@ -1,0 +1,16 @@
+{
+  "instances": [
+    {
+      "clockUtc": "2024-10-15T12:00:00Z",
+      "purpose": "specific natural month 2024-10; official metadata selects CC-MAIN-2024-42 and excludes CC-MAIN-2024-38 / 2024-10"
+    },
+    {
+      "clockUtc": "2025-05-15T00:00:00Z",
+      "purpose": "recent 3 natural months (2025-03, 2025-04, 2025-05); CC-MAIN-2025-18 intersects April/May"
+    },
+    {
+      "clockUtc": "2026-01-01T00:00:00Z",
+      "purpose": "year-boundary window for month arithmetic; no system clock reads allowed"
+    }
+  ]
+}

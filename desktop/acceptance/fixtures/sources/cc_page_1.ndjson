@@ -1,0 +1,2 @@
+{"url": "https://example.com/second", "status": "200", "mime": "text/html", "length": "64", "digest": "CC-DIGEST-5", "timestamp": "20240202030405", "offset": "400", "filename": "crawl-data/CC-MAIN-2024-10/segments/1700000000000.00/warc/CC-MAIN-20240102000000-00000.warc.gz"}
+{"url": "https://other.example.net/out-of-scope", "status": "200", "mime": "text/html", "length": "64", "digest": "CC-DIGEST-6", "timestamp": "20240203030405", "offset": "500", "filename": "crawl-data/CC-MAIN-2024-10/segments/1700000000000.00/warc/CC-MAIN-20240102000000-00000.warc.gz"}

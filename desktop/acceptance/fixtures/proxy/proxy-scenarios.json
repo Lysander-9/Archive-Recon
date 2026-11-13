@@ -1,0 +1,34 @@
+[
+  {
+    "id": "direct",
+    "config": { "mode": "direct" },
+    "expected": { "proxyUsed": false, "directAttempted": true }
+  },
+  {
+    "id": "system-from-env",
+    "env": { "HTTPS_PROXY": "http://127.0.0.1:18080" },
+    "config": { "mode": "system", "sourceEnv": "HTTPS_PROXY" },
+    "expected": { "proxyUsed": true, "directAttempted": false }
+  },
+  {
+    "id": "fixed-http",
+    "config": { "mode": "fixed", "url": "http://127.0.0.1:18080" },
+    "expected": { "proxyUsed": true, "directAttempted": false }
+  },
+  {
+    "id": "fixed-socks5",
+    "config": { "mode": "fixed", "url": "socks5://127.0.0.1:1080" },
+    "expected": { "proxyUsed": true, "directAttempted": false }
+  },
+  {
+    "id": "proxy-connect-refused",
+    "config": { "mode": "fixed", "url": "http://127.0.0.1:18080" },
+    "script": "proxy-connect-refused",
+    "expected": {
+      "errorCode": "NETWORK",
+      "proxyUsed": true,
+      "directAttempted": false,
+      "reason": "proxy-connect-refused"
+    }
+  }
+]
