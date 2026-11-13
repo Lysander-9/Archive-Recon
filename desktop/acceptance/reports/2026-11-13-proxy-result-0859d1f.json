@@ -1,0 +1,38 @@
+{
+  "sha": "0859d1f",
+  "capturedAt": "2026-11-13",
+  "command": "node acceptance/prepare.mjs && node_modules/electron/dist/electron.exe acceptance/proxy/generated/run-proxy-acceptance.cjs",
+  "results": [
+    {
+      "id": "loopback-default-config",
+      "ok": false,
+      "gap": true,
+      "detail": "production config bypasses loopback: originHits=1, proxyHits=0; test-environment gap"
+    },
+    {
+      "id": "http-proxy",
+      "ok": true,
+      "detail": "status ok; proxyHits=1"
+    },
+    {
+      "id": "http-proxy-auth",
+      "ok": true,
+      "detail": "status ok; authorized=1"
+    },
+    {
+      "id": "socks5-proxy",
+      "ok": true,
+      "detail": "status ok; socksHits=1"
+    },
+    {
+      "id": "socks5-auth-rejected",
+      "ok": true,
+      "detail": "rejected before start; code=PROXY; originHits=0; socksHits=0"
+    },
+    {
+      "id": "proxy-failure-no-direct",
+      "ok": true,
+      "detail": "error=net::ERR_PROXY_CONNECTION_FAILED"
+    }
+  ]
+}

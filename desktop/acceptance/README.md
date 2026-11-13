@@ -34,25 +34,21 @@ node acceptance/prepare.mjs
 node acceptance/packaged/run-packaged-acceptance.mjs
 ```
 
-当前基线结果（2026-11-13，提交 `a417955`，第二轮新增回归）：
+当前固定候选结果（2026-11-13，`0859d1f`，验收集 `5681a83`）：
 
 | 项 | 结果 |
 |---|---|
-| 独立验收 | **89 tests / 68 pass / 20 fail / 1 skip**，exit 1 |
-| 失败组 | T1 非法主机字符（9 个子用例）；R6 并发/会话 5 项；T3 UTC 3 项；Wayback 坏行续页 1 项；非法日期回卷 1 项 |
+| 独立验收 | **97 tests / 96 pass / 0 fail / 1 skip**，exit 0 |
 | skip | 无 Node/Python 干净 Windows 环境的 ZIP 验收（真实缺口，不删除） |
-| 开发自测（仅记录） | unit 42 pass；Electron E2E 4 pass |
-| 构建 | typecheck 通过；build 通过；`dist:win` 产出 win-unpacked + ZIP |
-| 独立打包验收 | `node acceptance/packaged/run-packaged-acceptance.mjs` → **PACKAGED_ACCEPTANCE_RESULT ok=true**（精确“完成”、重试行数 3、CSV 五字段/BOM） |
+| 开发自测（仅记录） | unit 63 pass；Electron E2E 18 pass |
+| 构建 | typecheck / dist:win 通过；本地 ZIP 153,301,281 bytes，SHA-256 `87d3dfb3…ee10a` |
+| 独立打包验收 | 精确“完成”+ 重试行数 3 + 五字段 CSV，`ok=true`；打包双击只产生 1 组请求 |
+| 代理 | HTTP 免认证/认证成功；SOCKS5 免认证成功；SOCKS5 认证启动前拒绝（PROXY，零请求/零直连）；环回默认 bypass 仍列 gap |
 
-失败是生产代码缺陷证据，不得通过修改断言消除：
-
-1. `normalizeTarget` 接受 `*.*.example.com`、内嵌 `*`、反斜杠、下划线、百分号编码等非法主机；
-2. 并发 `startQuery`/双击在 `sessions.create` await 前未原子占用槽位 → 两个 job/session/请求组；
-3. `sessions.create` 未完成时 `closeAll` 不阻止后续启动；`closeAll` 不调用 `session.close`；关闭后仍可启动新查询；
-4. `parseOfficialTimestamp` 对无时区官方时间使用本地时区；跨月/边界选择错误；
-5. 非法日期（`2024-02-30`、`20240230000000`、`2024-04-31`）被 Date 回卷而非判 unknown；
-6. Wayback 满页 50 原始行含 1 坏行时，用清洗后 49 行判断 `hasMore=false`，提前停止，漏掉下一页。
+历史失败记录（`a417955`、`2c2438a`）见 `reports/`，不因新候选通过而删除或改写。
+`0859d1f` 已关闭并发/双击、创建期关闭、closeAll 会话、Wayback 续页、非法日期、
+UTC 边界与 T1 非法主机字符；主题/interesting/copyReasons 的正式 renderer 接线
+仍未完成，不能据契约测试宣称对应界面通过。
 
 ## 目录
 
