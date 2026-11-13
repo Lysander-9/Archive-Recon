@@ -65,11 +65,11 @@ npx playwright test --project=electron tests/e2e/ui-workspace.spec.ts
 nativeTheme 切换（不从 emulateMedia 冒充）、真实剪贴板读回、前缀准备态与失败回滚、
 取消终态、连续请求取最后一次、0 条原因空态、配置冻结提示与命中行高亮。
 
-验证记录（2026-11-13，Windows 11 / Node 26.13.0）：`typecheck`、`build` 通过；
-单元 **63 passed**；Electron E2E **28 passed**（`desktop.spec` 4 + `theme-contract` 2 +
-`ui-workspace` 22）；打包 `dist:win` + `verify:packaged` **PACKAGED_VERIFY_OK**。
-基线候选 `0859d1f` 的独立 acceptance（`75afc8f`）记录保持 **89 tests / 88 pass / 0 fail / 1 skip**，
-不由本界面提交改写。
+验证记录（2026-11-13，Windows 11 / Node 26.13.0，完整候选 SHA）：`typecheck`、`build` 通过；
+单元 **72 passed**；Electron E2E **29 passed**（`desktop.spec` 4 + `theme-contract` 2 +
+`ui-workspace` 22 + 真实剪贴板原因摘要 1）；独立 acceptance（`75afc8f` + `ccffa32`）
+**97 tests / 96 pass / 0 fail / 1 skip**；打包 `dist:win` + `verify:packaged`
+**PACKAGED_VERIFY_OK**，独立 packaged/double-click 验收通过。
 
 ## 可复现入口
 
@@ -91,7 +91,7 @@ node_modules/electron/dist/electron.exe acceptance/proxy/generated/run-proxy-acc
 node tests/integration/run-proxy-nonloopback.mjs
 ```
 
-`dist:win` 使用 `win.signAndEditExecutable=false`（未签名、不改 exe 资源），
+`dist:win` 使用 `win.signExecutable=false`（未签名，但仍写 exe 产品身份/图标），
 产物为完整运行时目录的 ZIP（根目录即 `win-unpacked` 内容），不含任何 `.py`、
 `.venv`、`tests/` 或 `node_modules`。
 
