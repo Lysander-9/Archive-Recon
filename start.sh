@@ -22,7 +22,7 @@ else
     exit 1
 fi
 
-if ! "$PY" -c "import tkinter, customtkinter, requests, pandas" >/dev/null 2>&1; then
+if ! "$PY" -c "import tkinter, customtkinter, requests" >/dev/null 2>&1; then
     echo "[ERROR] Tkinter or project dependencies are missing for: $PY" >&2
     echo "        Install them with: $PY -m pip install -r \"$SCRIPT_DIR/requirements.txt\"" >&2
     echo "        On Debian/Ubuntu Tkinter comes from the python3-tk package." >&2

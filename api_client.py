@@ -11,6 +11,8 @@ from datetime import datetime, timedelta
 from typing import Optional, List, Dict, Any
 from urllib.parse import urlencode, quote
 
+from archrecon.incomplete import IncompleteCode, IncompleteReason
+
 
 class ArchiveAPIClient:
     """封装对 Wayback Machine 和 Common Crawl 的 API 查询"""
@@ -59,7 +61,11 @@ class ArchiveAPIClient:
             self.session.proxies = {}
 
     def _request_with_retry(self, url: str) -> requests.Response:
-        """带重试的请求"""
+        """发出一次请求，最多尝试 ``max_retries`` 次（当前默认 2 次）。
+
+        该路径不感知任务取消：取消由调用方在请求之间检查（``stop_event``），
+        在途请求只能等 ``timeout`` 收敛，不承诺毫秒级中断。
+        """
         last_error = None
         for attempt in range(self.max_retries):
             try:
@@ -78,7 +84,10 @@ class ArchiveAPIClient:
                 last_error = str(e)
                 if attempt < self.max_retries - 1:
                     time.sleep(0.5)
-        raise APIError(f"Request failed after {self.max_retries} retries: {last_error}")
+        raise APIError(
+            f"Request failed after {self.max_retries} attempts: {last_error}",
+            retryable=True,
+        )
 
     # ==================== Wayback Machine CDX API ====================
 
@@ -145,19 +154,71 @@ class ArchiveAPIClient:
             resp = self._request_with_retry(url)
             data = resp.json()
 
-            if not data or len(data) < 2:
+            if not isinstance(data, list):
+                reason = IncompleteReason(
+                    code=IncompleteCode.PARSE_RECORD,
+                    message="Wayback 响应不是记录数组，已忽略本次内容",
+                    source="wayback",
+                    page=page,
+                    count=1,
+                )
                 return {
                     "results": [],
                     "total_available": 0,
                     "page": page,
                     "page_size": page_size,
                     "has_more": False,
+                    "parse_skipped": 1,
+                    "incomplete_reasons": [reason.to_dict()],
+                }
+
+            if len(data) < 2:
+                return {
+                    "results": [],
+                    "total_available": 0,
+                    "page": page,
+                    "page_size": page_size,
+                    "has_more": False,
+                    "parse_skipped": 0,
+                    "incomplete_reasons": [],
                 }
 
             headers = data[0]
             rows = data[1:]
 
-            results = [self._normalize_wayback_record(dict(zip(headers, row))) for row in rows]
+            if not isinstance(headers, list):
+                reason = IncompleteReason(
+                    code=IncompleteCode.PARSE_RECORD,
+                    message="Wayback 响应缺少列头数组，已忽略本次内容",
+                    source="wayback",
+                    page=page,
+                    count=1,
+                )
+                return {
+                    "results": [],
+                    "total_available": 0,
+                    "page": page,
+                    "page_size": page_size,
+                    "has_more": False,
+                    "parse_skipped": 1,
+                    "incomplete_reasons": [reason.to_dict()],
+                }
+
+            results = []
+            skipped = 0
+            line_numbers = []
+            for offset, row in enumerate(rows, start=2):
+                if not isinstance(row, list) or len(row) != len(headers):
+                    skipped += 1
+                    line_numbers.append(offset)
+                    continue
+                try:
+                    results.append(
+                        self._normalize_wayback_record(dict(zip(headers, row)))
+                    )
+                except (AttributeError, TypeError, ValueError):
+                    skipped += 1
+                    line_numbers.append(offset)
 
             return {
                 "results": results,
@@ -165,9 +226,19 @@ class ArchiveAPIClient:
                 "page": page,
                 "page_size": page_size,
                 "has_more": len(results) >= page_size,
+                "parse_skipped": skipped,
+                "incomplete_reasons": self._parse_incomplete_reasons(
+                    "wayback", skipped=skipped, line_numbers=line_numbers, page=page
+                ),
             }
         except requests.RequestException as e:
-            raise APIError(f"Wayback CDX query failed: {e}")
+            raise APIError(
+                f"Wayback CDX query failed: {e}", source="wayback", retryable=True
+            ) from e
+        except ValueError as e:
+            raise APIError(
+                f"Wayback CDX 响应不是有效 JSON：{e}", source="wayback", retryable=True
+            ) from e
 
     def query_wayback_paginated(
         self,
@@ -215,7 +286,9 @@ class ArchiveAPIClient:
             self._collinfo_cache = resp.json()
             return self._collinfo_cache
         except requests.RequestException as e:
-            raise APIError(f"Failed to fetch index list: {e}")
+            raise APIError(
+                f"Failed to fetch index list: {e}", source="commoncrawl", retryable=True
+            ) from e
 
     def get_indexes_for_period(
         self,
@@ -306,18 +379,32 @@ class ArchiveAPIClient:
                     "total_pages": total_pages,
                     "has_more": total_pages is not None and page + 1 < total_pages,
                     "index_id": index_id,
+                    "parse_skipped": 0,
+                    "incomplete_reasons": [],
                 }
 
             results = []
-            for line in raw_text.split("\n"):
+            skipped = 0
+            line_numbers = []
+            for offset, line in enumerate(raw_text.split("\n"), start=1):
                 line = line.strip()
                 if not line:
                     continue
                 try:
                     record = json.loads(line)
-                    results.append(self._normalize_cc_record(record))
                 except json.JSONDecodeError:
+                    skipped += 1
+                    line_numbers.append(offset)
                     continue
+                if not isinstance(record, dict):
+                    skipped += 1
+                    line_numbers.append(offset)
+                    continue
+                try:
+                    results.append(self._normalize_cc_record(record))
+                except (AttributeError, TypeError, ValueError):
+                    skipped += 1
+                    line_numbers.append(offset)
 
             return {
                 "results": results,
@@ -327,9 +414,22 @@ class ArchiveAPIClient:
                 "total_pages": total_pages,
                 "has_more": total_pages is not None and page + 1 < total_pages,
                 "index_id": index_id,
+                "parse_skipped": skipped,
+                "incomplete_reasons": self._parse_incomplete_reasons(
+                    "commoncrawl",
+                    skipped=skipped,
+                    line_numbers=line_numbers,
+                    index_id=index_id,
+                    page=page,
+                ),
             }
         except requests.RequestException as e:
-            raise APIError(f"Common Crawl query failed for {index_id}: {e}")
+            raise APIError(
+                f"Common Crawl query failed for {index_id}: {e}",
+                source="commoncrawl",
+                index_id=index_id,
+                retryable=True,
+            ) from e
 
     def get_commoncrawl_page_count(
         self,
@@ -356,7 +456,12 @@ class ArchiveAPIClient:
             data = response.json()
             return max(0, int(data.get("pages", 0)))
         except (requests.RequestException, ValueError, TypeError, AttributeError) as error:
-            raise APIError(f"Common Crawl page-count query failed for {index_id}: {error}")
+            raise APIError(
+                f"Common Crawl page-count query failed for {index_id}: {error}",
+                source="commoncrawl",
+                index_id=index_id,
+                retryable=True,
+            ) from error
 
     def query_commoncrawl_multi(
         self,
@@ -399,6 +504,29 @@ class ArchiveAPIClient:
     # ==================== 数据标准化 ====================
 
     @staticmethod
+    def _parse_incomplete_reasons(
+        source: str,
+        *,
+        skipped: int,
+        line_numbers: List[int],
+        index_id: Optional[str] = None,
+        page: Optional[int] = None,
+    ) -> List[Dict[str, Any]]:
+        """把被跳过的响应行转成结构化不完整原因；没有跳过时返回空列表。"""
+        if skipped <= 0:
+            return []
+        reason = IncompleteReason(
+            code=IncompleteCode.PARSE_LINE,
+            message=f"{skipped} 行响应无法解析，已跳过；结果可能不完整",
+            source=source,
+            index_id=index_id,
+            page=page,
+            count=skipped,
+            context={"line_numbers": tuple(line_numbers[:5])},
+        )
+        return [reason.to_dict()]
+
+    @staticmethod
     def _fmt_timestamp(raw: str) -> str:
         """将 YYYYMMDDHHMMSS 格式化为 YYYY-MM-DD"""
         if len(raw) >= 8:
@@ -414,6 +542,7 @@ class ArchiveAPIClient:
             "length": record.get("length", "") or "0",
             "file_type": (record.get("mimetype", "") or "unknown").split(";")[0].strip(),
             "timestamp": ArchiveAPIClient._fmt_timestamp(record.get("timestamp", "")),
+            "raw_timestamp": record.get("timestamp", "") or "",
             "source": "wayback",
         }
 
@@ -425,10 +554,38 @@ class ArchiveAPIClient:
             "length": record.get("length", "") or "0",
             "file_type": (record.get("mime", "") or "unknown").split(";")[0].strip(),
             "timestamp": ArchiveAPIClient._fmt_timestamp(record.get("timestamp", "")),
+            "raw_timestamp": record.get("timestamp", "") or "",
             "source": "commoncrawl",
         }
 
 
 class APIError(Exception):
-    """API 查询异常"""
-    pass
+    """API 查询异常。
+
+    可选的 ``source`` / ``index_id`` / ``retryable`` 字段供界面生成结构化
+    失败原因；不传时与旧行为完全兼容。
+    """
+
+    def __init__(
+        self,
+        message: str = "",
+        *,
+        source: Optional[str] = None,
+        index_id: Optional[str] = None,
+        retryable: bool = False,
+    ) -> None:
+        super().__init__(message)
+        self.message = message
+        self.source = source
+        self.index_id = index_id
+        self.retryable = retryable
+
+    def to_reason(self, *, page: Optional[int] = None) -> Dict[str, Any]:
+        return IncompleteReason(
+            code=IncompleteCode.NETWORK,
+            message=self.message,
+            source=self.source,
+            index_id=self.index_id,
+            page=page,
+            retryable=self.retryable,
+        ).to_dict()

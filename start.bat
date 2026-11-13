@@ -46,7 +46,7 @@ if errorlevel 1 (
 )
 
 rem Check GUI toolkit and runtime dependencies before launching
-%PY_CMD% -c "import tkinter, customtkinter, requests, pandas" >nul 2>&1
+%PY_CMD% -c "import tkinter, customtkinter, requests" >nul 2>&1
 if errorlevel 1 (
     echo [ERROR] Tkinter or project dependencies are missing.
     echo         Python: %PY_CMD%
