@@ -36,6 +36,14 @@ npm run build
 npm run test:e2e  # Electron 真实窗口 + 本地夹具
 npm run dist:win  # release/win-unpacked 与 release/ArchiveRecon-<ver>-win-x64.zip
 npm run verify:packaged  # 启动打包后的 exe 跑一次离线数据流
+
+# 独立验收（队友维护的 desktop/acceptance，不改断言）
+node acceptance/prepare.mjs
+node acceptance/run-acceptance.mjs
+node_modules/electron/dist/electron.exe acceptance/proxy/generated/run-proxy-acceptance.cjs 2>&1 | Select-String PROXY_ACCEPTANCE_RESULT
+
+# 非环回真实代理验证（本机非 loopback 地址，生产 bypass 策略不变）
+node tests/integration/run-proxy-nonloopback.mjs
 ```
 
 `dist:win` 使用 `win.signAndEditExecutable=false`（未签名、不改 exe 资源），
@@ -55,8 +63,11 @@ npm run verify:packaged  # 启动打包后的 exe 跑一次离线数据流
 - 目标：主机及其子域；`*.example.com` 是输入别名；拒绝路径/参数/片段/端口/用户信息/内部空白。
 - 预算：Wayback ≤20 页 × 50 条；CC 每索引 ≤5 页、`pageSize=5`（索引块单位）。
 - 时间：自然月 UTC `[月初, 下月初)`；时钟在任务开始时冻结；CC 仅按官方
-  `cdx-api` + `from/to` 区间相交选择，绝不从索引 ID 推断月份；元数据缺失/非法/倒置
-  显示“范围未知”，有限月份查询排除并记录原因。
+  `cdx-api` + `from/to` 区间相交选择，绝不从索引 ID 推断月份。官方 `from/to`
+  无论是否带时区后缀都按 UTC 严格解析（带 `Z`/偏移量时尊重偏移），保留原值；
+  缺失、非法、倒置（from > to）一律标为“范围未知”，有限月份查询排除并记录原因。
+- 目标校验在任何 URL 解析/网络调用之前完成：拒绝路径、参数、片段、端口、用户信息、
+  内部空白、百分号编码主机、反斜杠与控制字符；`*.example.com` 只是输入别名。
 - 结果：按原始完整 URL 首条去重；筛选作用于全部集合；追加保持筛选/排序；
   排序稳定；导出使用当前筛选排序的全量不可变快照。
 - 导出：五字段 `timestamp,status_code,length,file_type,url`，CSV UTF-8 BOM + CRLF，
@@ -65,6 +76,11 @@ npm run verify:packaged  # 启动打包后的 exe 跑一次离线数据流
   旧任务/跨来源事件不写入新集合；窗口关闭先取消并停止后续调度。
 - 网络：每任务独立 Electron session 分区，`setProxy` 完成后才请求；代理失败即失败，
   不回退直连；请求有独立 deadline，取消中止在途请求。
+- 代理认证：固定代理 URL 中的 `user:pass@` 只用于内存中的每任务凭据，通过 Chromium
+  代理挑战（`ClientRequest` 的 `login` 事件）按需应答；代理规则、`ProxySnapshot`、
+  错误文本与日志都不含凭据。SOCKS 认证 Chromium 不支持，启动任务时明确拒绝并给出
+  可理解原因，不会静默直连。生产代理配置保留 Chromium 默认的 loopback bypass；
+  环回代理成功与真实代理成功分开验证（非环回用本机非 loopback 地址夹具）。
 
 IPC 方法：`archive:startQuery`、`archive:cancelQuery`、`archive:getView`、
 `archive:exportResults`、`archive:copySelection`，事件通道 `archive:jobEvent`。
@@ -72,7 +88,11 @@ IPC 方法：`archive:startQuery`、`archive:cancelQuery`、`archive:getView`、
 
 ## 已知缺口
 
-- 代理协议/认证仅做配置与失败路径验证，未用真实代理服务实测 HTTP/SOCKS 连通性。
+- SOCKS 代理认证不受支持（Chromium 无该能力）：启动时明确拒绝并提示改用 HTTP 代理
+  认证或免认证 SOCKS5，不会回退直连；未用真实 SOCKS 认证服务做连通性证明。
+- 生产固定代理保留 Chromium 默认 loopback bypass，因此 127.0.0.1 代理夹具不能证明
+  默认配置走代理（验收脚本中该场景如实标记为 gap）；真实代理路径由非 loopback
+  地址夹具验证，未改变生产 bypass 策略。
 - CC 官方 `from/to` 语义按官方 collinfo 元数据实现，未联网核对真实索引样本。
 - 真实 1366×768/1202×680/1040×620 桌面、浅深主题、P1 界面交互属前端后续工作。
 - 打包未签名；未打 NSIS/MSI；未在无 Node 的干净 Windows 机器做人工验收（本地已用

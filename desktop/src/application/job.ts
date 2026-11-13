@@ -477,6 +477,17 @@ export class JobManager {
     job.completion = completion;
     job.status = status;
     this.emitState(job, status);
+    // The terminal state is emitted only after the collection is final; a paired
+    // viewChanged with the same revision lets the UI refresh without sleeping or
+    // racing the "completed but table not updated" window.
+    this.deps.emit(
+      this.baseEvent(job, "viewChanged", {
+        terminal: true,
+        status,
+        received: job.received,
+        unique: job.collection.total,
+      }),
+    );
     void this.deps.sessions.close(job.id).catch(() => undefined);
   }
 

@@ -65,4 +65,17 @@ test.describe("target normalization (T1)", () => {
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.message).toContain("用户信息");
   });
+
+  test("rejects percent-encoded hosts, backslashes and control characters before parsing", () => {
+    const cases = [
+      "exa%6Dple.com",
+      "%65xample.com",
+      "https://example.com\\@evil.test",
+      "example.com\u0000.evil",
+    ];
+    for (const input of cases) {
+      const result = normalizeTarget(input);
+      expect(result.ok, input).toBe(false);
+    }
+  });
 });

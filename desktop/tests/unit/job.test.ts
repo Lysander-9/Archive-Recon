@@ -92,6 +92,40 @@ test.describe("job manager (T1/T2/T3)", () => {
     expect(created).toBe(0);
   });
 
+  test("percent-encoded targets make zero session and transport calls", async () => {
+    let created = 0;
+    let queried = 0;
+    const manager = new JobManager(
+      deps({
+        sessions: {
+          create: async () => {
+            created += 1;
+            throw new Error("should not run");
+          },
+          close: async () => undefined,
+        },
+        wayback: {
+          queryPage: async () => {
+            queried += 1;
+            return { records: [], hasMore: false, parseSkipped: 0, reasons: [] };
+          },
+        },
+      }),
+    );
+
+    const result = await manager.start({
+      target: "exa%6Dple.com",
+      source: "wayback",
+      range: { kind: "all" },
+      proxy: { mode: "direct" },
+    });
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error.code).toBe("INVALID_INPUT");
+    expect(created).toBe(0);
+    expect(queried).toBe(0);
+  });
+
   test("proxy setup failure fails the start and never queries", async () => {
     let queried = 0;
     const manager = new JobManager(
@@ -335,5 +369,49 @@ test.describe("job manager (T1/T2/T3)", () => {
         "url",
       ]);
     }
+  });
+
+  test("terminal state is followed by a viewChanged with the final revision", async () => {
+    const environment = deps({
+      wayback: {
+        queryPage: async () => ({
+          records: [rawRecord("https://example.com/a"), rawRecord("https://example.com/b")],
+          hasMore: false,
+          parseSkipped: 0,
+          reasons: [],
+        }),
+      },
+    });
+    const manager = new JobManager(environment);
+
+    const started = await manager.start({
+      target: "example.com",
+      source: "wayback",
+      range: { kind: "all" },
+      proxy: { mode: "direct" },
+    });
+    expect(started.ok).toBe(true);
+    if (!started.ok) return;
+    const jobId = started.value.jobId;
+
+    await until(() => viewOf(manager, jobId).terminal);
+    const view = viewOf(manager, jobId);
+    const jobEvents = environment.events.filter((event) => event.jobId === jobId);
+
+    const terminalState = jobEvents
+      .filter((event) => event.kind === "state")
+      .filter((event) =>
+        ["completed", "partial", "failed", "stopped"].includes(String(event.payload.status)),
+      );
+    expect(terminalState).toHaveLength(1);
+    expect(terminalState[0].revision).toBe(view.revision);
+
+    const last = jobEvents[jobEvents.length - 1];
+    expect(last.kind).toBe("viewChanged");
+    expect(last.revision).toBe(view.revision);
+    expect(last.payload.terminal).toBe(true);
+
+    // Immediately after the terminal event the view already carries the rows.
+    expect(view.rows).toHaveLength(2);
   });
 });

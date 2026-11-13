@@ -68,14 +68,49 @@ export function parseOfficialTimestamp(raw: unknown): number | null {
   if (typeof raw !== "string") return null;
   const value = raw.trim();
   if (!value) return null;
-  const digits = /^(\d{4})(\d{2})(\d{2})(\d{2})?(\d{2})?(\d{2})?$/.exec(value);
-  if (digits) {
-    const [, y, m, d, hh = "00", mm = "00", ss = "00"] = digits;
-    const ms = Date.UTC(Number(y), Number(m) - 1, Number(d), Number(hh), Number(mm), Number(ss));
-    return Number.isFinite(ms) ? ms : null;
+
+  const compact = /^(\d{4})(\d{2})(\d{2})(?:(\d{2})(\d{2})(\d{2}))?(?:\.(\d{1,3}))?(Z|[+-]\d{2}:?\d{2})?$/.exec(value);
+  const iso = /^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2})(?::(\d{2})(?:\.(\d{1,3}))?)?)?(Z|[+-]\d{2}:?\d{2})?$/.exec(value);
+  const match = compact ?? iso;
+  if (!match) return null;
+
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const hour = Number(match[4] ?? "0");
+  const minute = Number(match[5] ?? "0");
+  const second = Number(match[6] ?? "0");
+  const millisecond = Number((match[7] ?? "0").padEnd(3, "0"));
+  const timezone = match[8] ?? "";
+
+  if (month < 1 || month > 12) return null;
+  if (hour > 23 || minute > 59 || second > 59) return null;
+
+  let offsetMinutes = 0;
+  if (timezone && timezone !== "Z") {
+    const sign = timezone.startsWith("-") ? -1 : 1;
+    const digits = timezone.slice(1).replace(":", "");
+    const offsetHour = Number(digits.slice(0, 2));
+    const offsetMinute = Number(digits.slice(2, 4));
+    if (offsetHour > 23 || offsetMinute > 59) return null;
+    offsetMinutes = sign * (offsetHour * 60 + offsetMinute);
   }
-  const parsed = Date.parse(value);
-  return Number.isFinite(parsed) ? parsed : null;
+
+  const wallMs = Date.UTC(year, month - 1, day, hour, minute, second, millisecond);
+  const check = new Date(wallMs);
+  // Reject rollover such as 2024-02-30 or 25:00 instead of silently normalising.
+  if (
+    check.getUTCFullYear() !== year ||
+    check.getUTCMonth() !== month - 1 ||
+    check.getUTCDate() !== day ||
+    check.getUTCHours() !== hour ||
+    check.getUTCMinutes() !== minute ||
+    check.getUTCSeconds() !== second ||
+    check.getUTCMilliseconds() !== millisecond
+  ) {
+    return null;
+  }
+  return wallMs - offsetMinutes * 60_000;
 }
 
 export interface CcIndexMeta {

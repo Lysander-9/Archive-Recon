@@ -19,6 +19,12 @@ export function normalizeTarget(input: string): TargetResult {
   let value = typeof input === "string" ? input.trim() : "";
   if (!value) return invalid("请输入目标域名后再开始查询。");
   if (WHITESPACE.test(value)) return invalid("域名中不能包含空白字符，请检查后重试。");
+  // Reject illegal host representations before any URL parsing: percent-encoding,
+  // backslashes and control characters must never reach the network layer.
+  if (/%/.test(value)) return invalid("域名中不能包含百分号编码等非法字符，请直接输入域名。");
+  if (/[\u0000-\u001F\u007F\\]/.test(value)) {
+    return invalid("域名格式无效，请输入 example.com 或 *.example.com。");
+  }
   if (value.includes("@")) return invalid("请移除用户信息（user:pass@），只输入域名。");
 
   const scheme = /^([a-zA-Z][a-zA-Z0-9+.-]*):\/\//.exec(value);

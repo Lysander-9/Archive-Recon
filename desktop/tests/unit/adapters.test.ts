@@ -3,7 +3,7 @@ import { expect, test } from "@playwright/test";
 import { AppError } from "../../src/application/errors";
 import type { RequestOptions } from "../../src/application/ports";
 import { CommonCrawlAdapter } from "../../src/main/adapters/commoncrawl";
-import { buildProxyConfig, proxySnapshot } from "../../src/main/adapters/proxy";
+import { buildProxyConfig, parseProxyServer, proxySnapshot } from "../../src/main/adapters/proxy";
 import { WaybackAdapter } from "../../src/main/adapters/wayback";
 import { fetchText } from "../../src/main/adapters/http";
 import { parseCcIndex } from "../../src/domain/time";
@@ -108,16 +108,36 @@ test.describe("proxy isolation", () => {
     });
   });
 
-  test("rejects malformed fixed proxies without falling back to direct", () => {
-    expect(() => buildProxyConfig({ mode: "fixed", server: "127.0.0.1:7890" })).toThrow(AppError);
-    expect(() => buildProxyConfig({ mode: "fixed", server: "" })).toThrow(AppError);
+  test("buildProxyConfig rejects paths and malformed servers, strips credentials", () => {
+    for (const server of ["", "127.0.0.1:7890", "ftp://127.0.0.1:21", "http://127.0.0.1:7890/extra"]) {
+      expect(() => buildProxyConfig({ mode: "fixed", server }), server).toThrow(AppError);
+    }
+    const stripped = buildProxyConfig({
+      mode: "fixed",
+      server: "http://user:secret@127.0.0.1:7890",
+    });
+    expect(stripped.proxyRules).toBe("http://127.0.0.1:7890");
+    expect(JSON.stringify(stripped)).not.toContain("secret");
+  });
+
+  test("parseProxyServer separates credentials from the proxy rules value", () => {
+    const parsed = parseProxyServer("http://user:secret@127.0.0.1:7890");
+    expect(parsed.baseServer).toBe("http://127.0.0.1:7890");
+    expect(parsed.username).toBe("user");
+    expect(parsed.password).toBe("secret");
+    expect(parsed.hasCredentials).toBe(true);
+    expect(buildProxyConfig({ mode: "fixed", server: parsed.baseServer }).proxyRules).toBe(
+      "http://127.0.0.1:7890",
+    );
+    expect(parseProxyServer("socks5://user:p%40ss@127.0.0.1:1080").password).toBe("p@ss");
   });
 
   test("redacts credentials in the displayed snapshot", () => {
     const snapshot = proxySnapshot({ mode: "fixed", server: "http://user:secret@127.0.0.1:7890" });
     expect(snapshot.display).not.toContain("secret");
     expect(snapshot.display).not.toContain("user:");
-    expect(snapshot.server).toContain("user:secret");
+    expect(snapshot.server).not.toContain("secret");
+    expect(snapshot.server).not.toContain("user:");
   });
 });
 

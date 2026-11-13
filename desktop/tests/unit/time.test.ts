@@ -37,25 +37,61 @@ test.describe("UTC month windows (T3)", () => {
 test.describe("official Common Crawl interval selection (T3)", () => {
   const window = resolveRange({ kind: "recent", months: 3 }, new Date("2025-09-15T00:00:00Z"));
 
-  test("parses official from/to timestamps and flags unknown metadata", () => {
-    const meta = parseCcIndex({
-      id: "CC-MAIN-2025-38",
-      "cdx-api": "https://index.commoncrawl.org/CC-MAIN-2025-38-index",
-      from: "20250801000000",
-      to: "20250930235959",
-    });
-    expect(meta).not.toBeNull();
-    expect(meta?.unknown).toBe(false);
-    expect(meta?.fromMs).toBe(Date.UTC(2025, 7, 1));
+  test("no-timezone official timestamps are interpreted strictly as UTC", () => {
+    expect(parseOfficialTimestamp("2024-10-03T09:40:20")).toBe(Date.UTC(2024, 9, 3, 9, 40, 20));
+    expect(parseOfficialTimestamp("2024-10-03 09:40:20")).toBe(Date.UTC(2024, 9, 3, 9, 40, 20));
+    expect(parseOfficialTimestamp("20241003094020")).toBe(Date.UTC(2024, 9, 3, 9, 40, 20));
+    expect(parseOfficialTimestamp("2024-10-03")).toBe(Date.UTC(2024, 9, 3));
+  });
 
-    const broken = parseCcIndex({
-      id: "CC-MAIN-TEST",
-      "cdx-api": "https://example.invalid/index",
-      from: "not-a-date",
-      to: "20240101000000",
-    });
-    expect(broken?.unknown).toBe(true);
-    expect(parseOfficialTimestamp("20240101000000")).toBe(Date.UTC(2024, 0, 1));
+  test("explicit offsets are honoured and invalid dates are rejected", () => {
+    expect(parseOfficialTimestamp("2024-10-03T09:40:20Z")).toBe(Date.UTC(2024, 9, 3, 9, 40, 20));
+    expect(parseOfficialTimestamp("2024-10-03T09:40:20+08:00")).toBe(Date.UTC(2024, 9, 3, 1, 40, 20));
+    expect(parseOfficialTimestamp("2024-10-03T09:40:20-05:00")).toBe(Date.UTC(2024, 9, 3, 14, 40, 20));
+    expect(parseOfficialTimestamp("2024-02-30T00:00:00")).toBeNull();
+    expect(parseOfficialTimestamp("2024-13-01T00:00:00")).toBeNull();
+    expect(parseOfficialTimestamp("2024-10-03T25:00:00")).toBeNull();
+    expect(parseOfficialTimestamp("not-a-date")).toBeNull();
+  });
+
+  test("cross-month metadata is selected for each intersecting UTC month", () => {
+    const crossMonth = parseCcIndex({
+      id: "CC-MAIN-2025-18",
+      "cdx-api": "https://index.commoncrawl.org/CC-MAIN-2025-18-index",
+      from: "2025-04-01T00:00:00",
+      to: "2025-05-01T01:05:29",
+    })!;
+    const mayWindow = resolveRange({ kind: "month", year: 2025, month: 5 }, clock);
+    const aprilWindow = resolveRange({ kind: "month", year: 2025, month: 4 }, clock);
+
+    expect(selectIndexes([crossMonth], mayWindow).indexes.map((item) => item.id)).toEqual([
+      "CC-MAIN-2025-18",
+    ]);
+    expect(selectIndexes([crossMonth], aprilWindow).indexes.map((item) => item.id)).toEqual([
+      "CC-MAIN-2025-18",
+    ]);
+  });
+
+  test("a UTC boundary index is not pulled into the previous month", () => {
+    const boundary = parseCcIndex({
+      id: "CC-MAIN-BOUNDARY",
+      "cdx-api": "https://index.commoncrawl.org/CC-MAIN-BOUNDARY-index",
+      from: "2024-11-01T00:00:00",
+      to: "2024-11-02T00:00:00",
+    })!;
+    const october = resolveRange({ kind: "month", year: 2024, month: 10 }, clock);
+
+    expect(selectIndexes([boundary], october).indexes).toEqual([]);
+  });
+
+  test("malformed official timestamps mark an index as unknown", () => {
+    const inverted = parseCcIndex({
+      id: "CC-MAIN-INVERTED",
+      "cdx-api": "https://index.commoncrawl.org/CC-MAIN-INVERTED-index",
+      from: "2024-12-01T00:00:00",
+      to: "2024-11-01T00:00:00",
+    })!;
+    expect(inverted.unknown).toBe(true);
   });
 
   test("selects by interval intersection, not by id or name", () => {
