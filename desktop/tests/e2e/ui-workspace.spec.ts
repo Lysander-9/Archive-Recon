@@ -62,10 +62,16 @@ async function startFixture(): Promise<Fixture> {
     response.setHeader("content-type", "application/json; charset=utf-8");
 
     if (url.pathname === "/wayback") {
+      const host = (url.searchParams.get("url") ?? "").toLowerCase();
       const page = Number(url.searchParams.get("page") ?? "0");
       const size = Number(url.searchParams.get("pageSize") ?? "50");
-      const body = [wayback[0], ...wayback.slice(1 + page * size, 1 + (page + 1) * size)];
-      response.end(JSON.stringify(body));
+      // 慢速目标：用于验证“立即准备态”与失败回滚
+      const delay = host.includes("slow.example.com") ? 900 : 0;
+      // 空结果目标：确实没有存档记录
+      const rows = host.includes("empty.example.com")
+        ? [wayback[0]]
+        : [wayback[0], ...wayback.slice(1 + page * size, 1 + (page + 1) * size)];
+      setTimeout(() => response.end(JSON.stringify(rows)), delay);
       return;
     }
     if (url.pathname === "/cc/collinfo.json") {
@@ -82,11 +88,24 @@ async function startFixture(): Promise<Fixture> {
       return;
     }
     if (url.pathname === "/cc/CC-MAIN-2024-10-index") {
+      const host = (url.searchParams.get("url") ?? "").toLowerCase();
+      const slowCancel = host.includes("slowcc.example.com");
+      const emptyHost = host.includes("empty.example.com");
       if (url.searchParams.get("showNumPages") === "true") {
-        response.end(JSON.stringify({ pages: 1 }));
+        response.end(JSON.stringify({ pages: slowCancel ? 3 : 1 }));
         return;
       }
       response.setHeader("content-type", "application/x-ndjson; charset=utf-8");
+      if (emptyHost) {
+        // 只有解析失败行：0 条有效记录 + parse_line 原因
+        response.end("not-json-line-one\nnot-json-line-two");
+        return;
+      }
+      const page = Number(url.searchParams.get("page") ?? "0");
+      if (slowCancel && page > 0) {
+        setTimeout(() => response.end(""), 1_500);
+        return;
+      }
       const lines: string[] = [];
       for (let i = 0; i < 20; i += 1) {
         lines.push(
@@ -205,6 +224,44 @@ async function runCommonCrawl(): Promise<void> {
   await expect(page.locator("#rows-body tr").first()).toBeVisible();
 }
 
+
+/* ------------------------------------------------------------------ */
+/* 颜色对比度工具（真实窗口计算样式，非主题验收）                          */
+/* ------------------------------------------------------------------ */
+
+function parseRgb(value: string): [number, number, number] {
+  const match = /rgba?\(([^)]+)\)/.exec(value);
+  if (!match) throw new Error(`无法解析颜色: ${value}`);
+  const parts = match[1].split(",").map((item) => Number.parseFloat(item.trim()));
+  return [parts[0], parts[1], parts[2]];
+}
+
+function relativeLuminance([r, g, b]: [number, number, number]): number {
+  const channel = (raw: number): number => {
+    const value = raw / 255;
+    return value <= 0.03928 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4;
+  };
+  return 0.2126 * channel(r) + 0.7152 * channel(g) + 0.0722 * channel(b);
+}
+
+function contrastRatio(foreground: string, background: string): number {
+  const fg = relativeLuminance(parseRgb(foreground));
+  const bg = relativeLuminance(parseRgb(background));
+  const light = Math.max(fg, bg);
+  const dark = Math.min(fg, bg);
+  return (light + 0.05) / (dark + 0.05);
+}
+
+async function chipContrast(): Promise<number> {
+  const colors = (await page.evaluate(
+    `(() => {
+      const style = getComputedStyle(document.querySelector('[data-testid="status-chip"]'));
+      return [style.color, style.backgroundColor];
+    })()`,
+  )) as [string, string];
+  return contrastRatio(colors[0], colors[1]);
+}
+
 test.describe.configure({ mode: "serial" });
 
 test.beforeAll(async () => {
@@ -297,6 +354,7 @@ test("任务状态与复制/导出提示互不覆盖", async () => {
   const taskBefore = await page.locator('[data-testid="task-text"]').textContent();
   await expect(page.locator('[data-testid="status-chip"]')).toHaveText("完成");
 
+  await page.locator("#rows-body input[type=checkbox]").first().check();
   await page.click('[data-testid="copy-url"]');
   await expect(page.locator('[data-testid="notice"]')).toContainText(/已复制 \d+ 条 URL/);
   expect(await page.locator('[data-testid="task-text"]').textContent()).toBe(taskBefore);
@@ -455,4 +513,172 @@ test("筛选无匹配时给出清除入口", async () => {
   await expect(page.locator("#empty-title")).toHaveText("当前筛选没有匹配结果");
   await page.click("#empty-action");
   await expect(page.locator("#rows-body tr").first()).toBeVisible();
+});
+
+test("结果头显示来源，域名提示标注当前页", async () => {
+  await runWayback();
+  await expect(page.locator('[data-testid="scope-label"]')).toContainText("来源 Wayback Machine");
+  await expect(page.locator('[data-testid="scope-label"]')).toContainText("目标 example.com");
+  const placeholder = await page.getAttribute('[data-testid="filter-domain"]', "placeholder");
+  expect(placeholder ?? "").toContain("当前页");
+});
+
+test("await 前立即进入准备态并清零摘要，失败回滚上一次任务", async () => {
+  await runWayback();
+  await expect(page.locator('[data-testid="summary"]')).toContainText("匹配 60 / 去重 60 / 接收 62");
+
+  await page.fill('[data-testid="target-input"]', "slow.example.com");
+  await page.click('[data-testid="start-button"]');
+  // 900ms 夹具延迟内必须已经是准备/查询态、摘要清零、开始按钮禁用
+  await expect(page.locator('[data-testid="summary"]')).toHaveText("匹配 0 / 去重 0 / 接收 0");
+  await expect(page.locator('[data-testid="status-chip"]')).toHaveText(/准备中|查询中/);
+  await expect(page.locator('[data-testid="start-button"]')).toBeDisabled();
+  await expect(page.locator("#rows-body tr")).toHaveCount(0);
+
+  await expect(page.locator('[data-testid="status-chip"]')).toHaveText("完成", { timeout: 30_000 });
+  await expect(page.locator('[data-testid="summary"]')).toContainText("匹配 60 / 去重 60 / 接收 62");
+
+  // 无效目标：await 失败后回滚到上一次终态与结果，按钮恢复可用
+  await page.fill('[data-testid="target-input"]', "http://bad.example.com/path");
+  await page.click('[data-testid="start-button"]');
+  await expect(page.locator('[data-testid="notice"]')).toContainText("INVALID_INPUT");
+  await expect(page.locator('[data-testid="status-chip"]')).toHaveText("完成", { timeout: 15_000 });
+  await expect(page.locator('[data-testid="start-button"]')).toBeEnabled();
+  await expect(page.locator("#rows-body tr").first()).toBeVisible();
+});
+
+test("取消后不残留停止中，终态以任务状态为准", async () => {
+  await page.selectOption('[data-testid="source-select"]', "commoncrawl");
+  await page.selectOption('[data-testid="range-mode"]', "all");
+  await page.fill('[data-testid="target-input"]', "slowcc.example.com");
+  await page.click('[data-testid="start-button"]');
+
+  await expect(page.locator("#rows-body tr")).toHaveCount(20, { timeout: 30_000 });
+  // 只有仍可停止时才点击，避免任务已自然结束导致点击等待禁用按钮
+  await expect(page.locator('[data-testid="cancel-button"]')).toBeEnabled();
+  await page.click('[data-testid="cancel-button"]');
+
+  await expect(page.locator('[data-testid="status-chip"]')).toHaveText(/已停止|部分完成|完成/, {
+    timeout: 30_000,
+  });
+  await expect(page.locator('[data-testid="status-chip"]')).not.toHaveText("停止中");
+  await expect(page.locator('[data-testid="task-text"]')).not.toContainText("停止中");
+  await expect(page.locator("#rows-body tr")).toHaveCount(20);
+  await expect(page.locator('[data-testid="cancel-button"]')).toBeDisabled();
+});
+
+test("真实剪贴板：未勾选先提示选择，勾选后只复制所选 URL", async () => {
+  await runWayback();
+  await app.evaluate(({ clipboard }) => clipboard.writeText("SENTINEL"));
+
+  await page.click('[data-testid="copy-url"]');
+  await expect(page.locator('[data-testid="notice"]')).toContainText("请先勾选");
+  expect(await app.evaluate(({ clipboard }) => clipboard.readText())).toBe("SENTINEL");
+
+  const boxes = page.locator("#rows-body input[type=checkbox]");
+  await boxes.nth(1).check();
+  await boxes.nth(3).check();
+  const expected = (await page.evaluate(
+    `Array.from(document.querySelectorAll("#rows-body tr.selected td.url")).map((node) => node.textContent).join("\\r\\n")`,
+  )) as string;
+  expect(expected.split("\r\n")).toHaveLength(2);
+
+  await page.click('[data-testid="copy-url"]');
+  await expect(page.locator('[data-testid="notice"]')).toContainText("已复制 2 条 URL");
+  const clipboardText = await app.evaluate(({ clipboard }) => clipboard.readText());
+  expect(clipboardText).toBe(expected);
+});
+
+test("取不到记录但存在未完成原因时空态不宣称没有存档，并提供原因入口", async () => {
+  await page.selectOption('[data-testid="source-select"]', "commoncrawl");
+  await page.selectOption('[data-testid="range-mode"]', "all");
+  await page.fill('[data-testid="target-input"]', "empty.example.com");
+  await page.click('[data-testid="start-button"]');
+
+  await expect(page.locator('[data-testid="status-chip"]')).toHaveText("部分完成", { timeout: 30_000 });
+  await expect(page.locator("#empty-title")).toHaveText("未取得可用记录");
+  await expect(page.locator("#empty-title")).not.toContainText("没有存档");
+  await expect(page.locator('[data-testid="reasons-button"]')).toBeVisible();
+
+  await expect(page.locator("#empty-action")).toHaveText("查看原因");
+  await page.click("#empty-action");
+  await expect(page.locator("#reasons-dialog")).toBeVisible();
+  await expect(page.locator("#reasons-list")).toContainText("响应解析丢行");
+  await page.keyboard.press("Escape");
+});
+
+test("原因摘要复制在通道交付前不提示成功", async () => {
+  await page.selectOption('[data-testid="source-select"]', "commoncrawl");
+  await page.selectOption('[data-testid="range-mode"]', "all");
+  await page.fill('[data-testid="target-input"]', "empty.example.com");
+  await page.click('[data-testid="start-button"]');
+  await expect(page.locator('[data-testid="status-chip"]')).toHaveText("部分完成", { timeout: 30_000 });
+
+  await app.evaluate(({ clipboard }) => clipboard.writeText("SENTINEL"));
+  await page.click('[data-testid="reasons-button"]');
+  await expect(page.locator("#reasons-dialog")).toBeVisible();
+  await page.click("#reasons-copy");
+
+  await expect(page.locator('[data-testid="notice"]')).toContainText("尚未接通主进程剪贴板通道");
+  await expect(page.locator('[data-testid="notice"]')).not.toContainText("已复制");
+  expect(await app.evaluate(({ clipboard }) => clipboard.readText())).toBe("SENTINEL");
+  await page.keyboard.press("Escape");
+});
+
+test("选择器修改只影响下次查询并有可见提示", async () => {
+  await runWayback();
+  await expect(page.locator('[data-testid="config-hint"]')).toHaveText(/冻结/);
+
+  await page.selectOption('[data-testid="source-select"]', "commoncrawl");
+  await expect(page.locator('[data-testid="config-hint"]')).toContainText("来源");
+  await expect(page.locator('[data-testid="config-hint"]')).toContainText("下次查询");
+  // 结果头仍显示本次任务冻结的来源
+  await expect(page.locator('[data-testid="scope-label"]')).toContainText("来源 Wayback Machine");
+  await expect(page.locator("#rows-body tr").first()).toBeVisible();
+
+  await page.selectOption('[data-testid="source-select"]', "wayback");
+  await expect(page.locator('[data-testid="config-hint"]')).toHaveText(/冻结/);
+
+  await page.fill('[data-testid="target-input"]', "other.example.com");
+  await expect(page.locator('[data-testid="config-hint"]')).toContainText("目标");
+  await page.fill('[data-testid="target-input"]', "example.com");
+  await expect(page.locator('[data-testid="config-hint"]')).toHaveText(/冻结/);
+});
+
+test("快速连续翻页以最后一次请求为准（旧响应不覆盖新视图）", async () => {
+  await runWayback();
+  await page.selectOption('[data-testid="page-size"]', "20");
+  await expect(page.locator('[data-testid="page-label"]')).toHaveText("第 1 / 3 页");
+
+  // 连续点击：多个 getView 可能在途，最终必须落在最后一次请求的页
+  await page.click('[data-testid="next-page"]');
+  await page.click('[data-testid="next-page"]');
+  await expect(page.locator('[data-testid="page-label"]')).toHaveText("第 3 / 3 页", {
+    timeout: 10_000,
+  });
+  await expect(page.locator("#rows-body tr").first().locator("td.rownum-col")).toHaveText("41");
+  await page.selectOption('[data-testid="page-size"]', "50");
+});
+
+test("状态色块对比度不低于 4.5（CSS 渲染检查，非系统主题验收）", async () => {
+  await runWayback();
+
+  await page.emulateMedia({ colorScheme: "light" });
+  await page.waitForTimeout(200);
+  expect(await chipContrast()).toBeGreaterThanOrEqual(4.5);
+
+  await page.emulateMedia({ colorScheme: "dark" });
+  await page.waitForTimeout(200);
+  expect(await chipContrast()).toBeGreaterThanOrEqual(4.5);
+
+  // 部分完成（暖色块）在深色下同样达标
+  await page.selectOption('[data-testid="source-select"]', "commoncrawl");
+  await page.selectOption('[data-testid="range-mode"]', "all");
+  await page.fill('[data-testid="target-input"]', "example.com");
+  await page.click('[data-testid="start-button"]');
+  await expect(page.locator('[data-testid="status-chip"]')).toHaveText("部分完成", { timeout: 30_000 });
+  await page.waitForTimeout(200);
+  expect(await chipContrast()).toBeGreaterThanOrEqual(4.5);
+
+  await page.emulateMedia({ colorScheme: "light" });
 });

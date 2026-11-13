@@ -25,11 +25,8 @@
             spellcheck="false"
             autocomplete="off"
             placeholder="例如 example.com 或 *.example.com"
-            aria-describedby="dirty-hint"
+            aria-describedby="config-hint"
           />
-          <span id="dirty-hint" data-testid="dirty-hint" class="dirty-hint hidden">
-            输入已修改，将在下次查询生效
-          </span>
         </div>
         <div class="field source-field">
           <label for="source-select">来源</label>
@@ -86,7 +83,9 @@
           <label for="proxy-server">代理地址</label>
           <input id="proxy-server" data-testid="proxy-server" type="text" placeholder="http://127.0.0.1:7890" />
         </div>
-        <span class="hint">代理与范围在开始查询时冻结，修改只影响下一次查询</span>
+        <span id="config-hint" data-testid="config-hint" class="hint">
+          代理与范围在开始查询时冻结，修改只影响下一次查询
+        </span>
       </section>
 
       <section class="statusbar" aria-label="任务状态">
@@ -117,7 +116,7 @@
             data-testid="filter-domain"
             type="text"
             list="domain-options"
-            placeholder="域名，! 排除"
+            placeholder="域名（当前页提示，! 排除）"
             title="域名筛选：支持逗号多值与 ! 排除；下拉提示来自当前页出现的域名"
             aria-label="域名筛选"
           />
@@ -163,7 +162,12 @@
           <div id="empty-state" data-testid="empty-state" class="empty-state">
             <p id="empty-title" class="empty-title">还没有结果</p>
             <p id="empty-detail" class="empty-detail">输入目标域名后开始查询</p>
-            <button id="empty-action" class="ghost hidden">重新查询</button>
+            <div class="empty-actions">
+              <button id="empty-action" class="ghost hidden">重新查询</button>
+              <button id="empty-action-2" data-testid="empty-action-secondary" class="ghost warn hidden">
+                查看原因
+              </button>
+            </div>
           </div>
         </div>
       </section>

@@ -16,6 +16,11 @@
   --warning-bg: #fff4cf;
   --chip-idle-bg: #eaf0f8;
   --chip-idle-fg: #4a5568;
+  --chip-run: #2563eb;
+  --chip-done: #16825d;
+  --chip-fail: #b72f3d;
+  --chip-partial-bg: #fff4cf;
+  --chip-partial-fg: #7a4d0a;
   --chip-on-accent: #ffffff;
   --row-hover: #eef3fb;
   --row-selected: #dbe8ff;
@@ -42,7 +47,12 @@
     --warning: #f0b429;
     --warning-bg: #4a3917;
     --chip-idle-bg: #24324a;
-    --chip-idle-fg: #cbd5e1;
+    --chip-idle-fg: #e2e8f0;
+    --chip-run: #2563eb;
+    --chip-done: #16825d;
+    --chip-fail: #b72f3d;
+    --chip-partial-bg: #4a3917;
+    --chip-partial-fg: #f0b429;
     --row-hover: #1d2740;
     --row-selected: #1d3358;
     --status-2xx: #34d399;
@@ -155,9 +165,16 @@ label {
   padding-bottom: 4px;
 }
 
-.dirty-hint {
+.hint.dirty {
   color: var(--warning);
-  font-size: 11px;
+  font-weight: 600;
+}
+
+.empty-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: center;
+  margin-top: 4px;
 }
 
 input,
@@ -283,23 +300,23 @@ th[data-sort]:focus-visible {
 
 .chip.preparing,
 .chip.running {
-  background: var(--primary);
+  background: var(--chip-run);
   color: var(--chip-on-accent);
 }
 
 .chip.stopping,
 .chip.partial {
-  background: var(--warning-bg);
-  color: var(--warning);
+  background: var(--chip-partial-bg);
+  color: var(--chip-partial-fg);
 }
 
 .chip.completed {
-  background: var(--success);
+  background: var(--chip-done);
   color: var(--chip-on-accent);
 }
 
 .chip.failed {
-  background: var(--danger);
+  background: var(--chip-fail);
   color: var(--chip-on-accent);
 }
 
@@ -641,8 +658,7 @@ dialog h2 {
 
 /* 窄窗口：保证固定区更紧凑，底栏仍然完整可达 */
 @media (max-width: 1120px) {
-  .brand-sub,
-  .hint {
+  .brand-sub {
     display: none;
   }
 
@@ -652,6 +668,13 @@ dialog h2 {
 
   .optionsbar {
     gap: 6px;
+  }
+
+  .hint {
+    margin-left: 0;
+    flex-basis: 100%;
+    font-size: 10px;
+    padding-bottom: 0;
   }
 
   .filters input[type="text"] {
