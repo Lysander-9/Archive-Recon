@@ -70,7 +70,10 @@ test.describe("Common Crawl adapter", () => {
       textResponse(ndjson),
       textResponse(ndjson),
     ]);
-    const adapter = new CommonCrawlAdapter({ indexBaseUrl: "http://127.0.0.1:9/cc" });
+    const adapter = new CommonCrawlAdapter({
+      indexBaseUrl: "http://127.0.0.1:9/cc",
+      allowInsecureCdxApi: true,
+    });
 
     const { metas } = await adapter.fetchIndexes(options(transport));
     expect(metas).toHaveLength(2);
@@ -95,6 +98,36 @@ test.describe("Common Crawl adapter", () => {
     const meta = parseCcIndex(collinfo[0])!;
     // An id like 2024-10 says nothing about the month; only `from`/`to` do.
     expect(meta.fromMs).toBe(Date.UTC(2024, 0, 1));
+  });
+
+  test("rejects cdx-api endpoints outside the official or configured origin", async () => {
+    const hostile = [
+      {
+        id: "CC-MAIN-EVIL",
+        "cdx-api": "https://evil.example/CC-MAIN-EVIL-index",
+        from: "20240101000000",
+        to: "20240201000000",
+      },
+      {
+        id: "CC-MAIN-USERINFO",
+        "cdx-api": "https://user:pass@index.commoncrawl.org/x-index",
+        from: "20240101000000",
+        to: "20240201000000",
+      },
+      {
+        id: "CC-MAIN-HTTP",
+        "cdx-api": "http://index.commoncrawl.org/x-index",
+        from: "20240101000000",
+        to: "20240201000000",
+      },
+    ];
+    const { transport } = fakeTransport([jsonResponse(hostile)]);
+    const adapter = new CommonCrawlAdapter({ indexBaseUrl: "https://index.commoncrawl.org" });
+
+    const { metas, invalidCount } = await adapter.fetchIndexes(options(transport));
+
+    expect(metas).toHaveLength(0);
+    expect(invalidCount).toBe(3);
   });
 });
 

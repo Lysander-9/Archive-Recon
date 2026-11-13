@@ -6,6 +6,7 @@ export const CHANNELS = {
   getView: "archive:getView",
   exportResults: "archive:exportResults",
   copySelection: "archive:copySelection",
+  copyReasons: "archive:copyReasons",
   jobEvent: "archive:jobEvent",
 } as const;
 

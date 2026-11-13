@@ -12,6 +12,7 @@ import { net, session as electronSession, type Session } from "electron";
 import type { HttpResponseLike, JobSession, SessionFactory, Transport } from "../application/ports";
 import type { ProxySpec } from "../contracts/types";
 import { AppError } from "../application/errors";
+import { DEFAULT_JOB_BUDGETS } from "../application/budgets";
 import {
   buildProxyConfig,
   parseProxyServer,
@@ -22,6 +23,8 @@ import {
 interface ProxyCredentials {
   username: string;
   password: string;
+  hostname: string;
+  port: string;
 }
 
 function abortError(): DOMException {
@@ -68,10 +71,14 @@ function createTransport(
 
       if (credentials) {
         request.on("login", (authInfo, callback) => {
-          if (authInfo?.isProxy) {
+          const matchesProxy =
+            authInfo?.isProxy === true &&
+            authInfo.host === credentials.hostname &&
+            String(authInfo.port) === credentials.port;
+          if (matchesProxy) {
             callback(credentials.username, credentials.password);
           } else {
-            // Never answer origin authentication with proxy credentials.
+            // Never answer origin authentication or a different proxy challenge.
             callback();
           }
         });
@@ -79,7 +86,30 @@ function createTransport(
 
       request.on("response", (response) => {
         const chunks: Buffer[] = [];
-        response.on("data", (chunk: Buffer) => chunks.push(Buffer.from(chunk)));
+        let totalBytes = 0;
+        response.on("data", (chunk: Buffer) => {
+          if (settled) return;
+          totalBytes += chunk.length;
+          if (totalBytes > DEFAULT_JOB_BUDGETS.maxResponseBytes) {
+            try {
+              request.abort();
+            } catch {
+              // ignore
+            }
+            fail(
+              new AppError(
+                "PARSE",
+                `响应体超过 ${DEFAULT_JOB_BUDGETS.maxResponseBytes} 字节上限，已中止读取`,
+                {
+                  retryable: false,
+                  context: { limit: DEFAULT_JOB_BUDGETS.maxResponseBytes },
+                },
+              ),
+            );
+            return;
+          }
+          chunks.push(Buffer.from(chunk));
+        });
         response.on("end", () => {
           if (settled) return;
           settled = true;
@@ -123,6 +153,8 @@ export function createElectronSessions(): ElectronSessionFactory {
           credentials = {
             username: parsed.username as string,
             password: parsed.password as string,
+            hostname: parsed.hostname,
+            port: parsed.port,
           };
         }
       }

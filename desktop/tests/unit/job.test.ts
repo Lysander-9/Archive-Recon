@@ -31,7 +31,7 @@ function deps(overrides: Partial<JobDeps> = {}): JobDeps & { events: JobEventDto
       queryPage: async () => ({ records: [], hasMore: false, parseSkipped: 0, reasons: [] }),
     } satisfies WaybackPort,
     commoncrawl: {
-      fetchIndexes: async () => ({ metas: [] }),
+      fetchIndexes: async () => ({ metas: [], invalidCount: 0 }),
       pageCount: async () => 0,
       queryPage: async () => ({ records: [], hasMore: false, parseSkipped: 0, reasons: [] }),
     } satisfies CommonCrawlPort,
@@ -276,7 +276,7 @@ test.describe("job manager (T1/T2/T3)", () => {
     const manager = new JobManager(
       deps({
         commoncrawl: {
-          fetchIndexes: async () => ({ metas: [overlapping, unknown] }),
+          fetchIndexes: async () => ({ metas: [overlapping, unknown], invalidCount: 0 }),
           pageCount: async () => 6,
           queryPage: async (_index, _host, page) => ({
             records: page < 5 ? [rawRecord(`https://example.com/cc/${page}`, { source: "commoncrawl" })] : [],
@@ -414,4 +414,288 @@ test.describe("job manager (T1/T2/T3)", () => {
     // Immediately after the terminal event the view already carries the rows.
     expect(view.rows).toHaveLength(2);
   });
+
+  test("concurrent starts reserve one slot: the second is BUSY with one session", async () => {
+    let created = 0;
+    const manager = new JobManager(
+      deps({
+        sessions: {
+          create: async (jobId) => {
+            created += 1;
+            await new Promise((resolve) => setTimeout(resolve, 20));
+            return {
+              transport: async () => ({ status: 200, text: async () => "[]", json: async () => [] }),
+              proxy: proxySnapshot({ mode: "direct" }),
+            };
+          },
+          close: async () => undefined,
+        },
+        wayback: {
+          queryPage: async () => ({
+            records: [rawRecord("https://example.com/a")],
+            hasMore: false,
+            parseSkipped: 0,
+            reasons: [],
+          }),
+        },
+      }),
+    );
+
+    const [first, second] = await Promise.all([
+      manager.start({ target: "example.com", source: "wayback", range: { kind: "all" }, proxy: { mode: "direct" } }),
+      manager.start({ target: "example.com", source: "wayback", range: { kind: "all" }, proxy: { mode: "direct" } }),
+    ]);
+
+    expect(created).toBe(1);
+    const outcomes = [first.ok, second.ok].sort();
+    expect(outcomes).toEqual([false, true]);
+    const rejected = first.ok ? second : first;
+    expect(rejected.ok).toBe(false);
+    if (!rejected.ok) expect(rejected.error.code).toBe("BUSY");
+    manager.closeAll();
+  });
+
+  test("closing before session creation resolves rejects the task and closes it", async () => {
+    let resolveSession!: (value: unknown) => void;
+    const closedIds: number[] = [];
+    const transportCalls: string[] = [];
+    const manager = new JobManager(
+      deps({
+        sessions: {
+          create: (jobId) =>
+            new Promise((resolve) => {
+              resolveSession = () =>
+                resolve({
+                  transport: async (url: string) => {
+                    transportCalls.push(url);
+                    return { status: 200, text: async () => "[]", json: async () => [] };
+                  },
+                  proxy: proxySnapshot({ mode: "direct" }),
+                });
+            }),
+          close: async (jobId) => {
+            closedIds.push(jobId);
+          },
+        },
+      }),
+    );
+
+    const pending = manager.start({
+      target: "example.com",
+      source: "wayback",
+      range: { kind: "all" },
+      proxy: { mode: "direct" },
+    });
+    manager.closeAll();
+    resolveSession(null);
+    const result = await pending;
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error.code).toBe("CLOSED");
+    expect(closedIds).toHaveLength(1);
+    expect(transportCalls).toEqual([]);
+
+    const afterClose = await manager.start({
+      target: "example.com",
+      source: "wayback",
+      range: { kind: "all" },
+      proxy: { mode: "direct" },
+    });
+    expect(afterClose.ok).toBe(false);
+    if (!afterClose.ok) expect(afterClose.error.code).toBe("CLOSED");
+  });
+
+  test("closeAll closes every job session and is idempotent", async () => {
+    const environment = deps({
+      wayback: {
+        queryPage: async (_host, _page, _size, options) =>
+          new Promise((_resolve, reject) => {
+            options.signal.addEventListener(
+              "abort",
+              () => reject(Object.assign(new Error("aborted"), { name: "AbortError" })),
+              { once: true },
+            );
+          }),
+      },
+    });
+    const manager = new JobManager(environment);
+    const started = await manager.start({
+      target: "example.com",
+      source: "wayback",
+      range: { kind: "all" },
+      proxy: { mode: "direct" },
+    });
+    expect(started.ok).toBe(true);
+    if (!started.ok) return;
+
+    manager.closeAll();
+    manager.closeAll();
+    await until(() => viewOf(manager, started.value.jobId).terminal);
+
+    expect(environment.closed.filter((id) => id === started.value.jobId).length).toBeGreaterThanOrEqual(2);
+  });
+
+  test("record budget truncates with a partial record_limit reason and stops pagination", async () => {
+    let calls = 0;
+    const manager = new JobManager(
+      deps({
+        budgets: { maxTaskRecords: 2 },
+        wayback: {
+          queryPage: async () => {
+            calls += 1;
+            return {
+              records: [
+                rawRecord("https://example.com/1"),
+                rawRecord("https://example.com/2"),
+                rawRecord("https://example.com/3"),
+              ],
+              hasMore: true,
+              parseSkipped: 0,
+              reasons: [],
+            };
+          },
+        },
+      }),
+    );
+    const started = await manager.start({
+      target: "example.com",
+      source: "wayback",
+      range: { kind: "all" },
+      proxy: { mode: "direct" },
+    });
+    expect(started.ok).toBe(true);
+    if (!started.ok) return;
+    await until(() => viewOf(manager, started.value.jobId).terminal);
+
+    const view = viewOf(manager, started.value.jobId);
+    expect(view.unique).toBe(2);
+    expect(view.status).toBe("partial");
+    expect(view.reasons.some((reason) => reason.code === "record_limit" && reason.count === 1)).toBe(true);
+    expect(calls).toBe(1);
+  });
+
+  test("page_limit is only reported when the cap pages really had more data", async () => {
+    const emptyFirstPage = new JobManager(
+      deps({
+        commoncrawl: {
+          fetchIndexes: async () => ({ metas: [indexMeta()], invalidCount: 0 }),
+          pageCount: async () => 6,
+          queryPage: async () => ({ records: [], hasMore: false, parseSkipped: 0, reasons: [] }),
+        },
+      }),
+    );
+    const emptyStarted = await emptyFirstPage.start({
+      target: "example.com",
+      source: "commoncrawl",
+      range: { kind: "all" },
+      proxy: { mode: "direct" },
+    });
+    expect(emptyStarted.ok).toBe(true);
+    if (!emptyStarted.ok) return;
+    await until(() => viewOf(emptyFirstPage, emptyStarted.value.jobId, "commoncrawl").terminal);
+    expect(
+      viewOf(emptyFirstPage, emptyStarted.value.jobId, "commoncrawl").reasons.some(
+        (reason) => reason.code === "page_limit",
+      ),
+    ).toBe(false);
+  });
+
+  test("invalid metadata entries are counted as unknown-range reasons", async () => {
+    const manager = new JobManager(
+      deps({
+        commoncrawl: {
+          fetchIndexes: async () => ({ metas: [], invalidCount: 2 }),
+          pageCount: async () => 0,
+          queryPage: async () => ({ records: [], hasMore: false, parseSkipped: 0, reasons: [] }),
+        },
+      }),
+    );
+    const started = await manager.start({
+      target: "example.com",
+      source: "commoncrawl",
+      range: { kind: "recent", months: 3 },
+      proxy: { mode: "direct" },
+    });
+    expect(started.ok).toBe(true);
+    if (!started.ok) return;
+    await until(() => viewOf(manager, started.value.jobId, "commoncrawl").terminal);
+    const view = viewOf(manager, started.value.jobId, "commoncrawl");
+    const reason = view.reasons.find((item) => item.code === "range_unknown");
+    expect(reason?.count).toBe(2);
+    expect(view.status).toBe("partial");
+  });
+
+  test("terminal transition advances the revision", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const manager = new JobManager(
+      deps({
+        wayback: {
+          queryPage: async () => {
+            await gate;
+            return {
+              records: [rawRecord("https://example.com/a")],
+              hasMore: false,
+              parseSkipped: 0,
+              reasons: [],
+            };
+          },
+        },
+      }),
+    );
+    const started = await manager.start({
+      target: "example.com",
+      source: "wayback",
+      range: { kind: "all" },
+      proxy: { mode: "direct" },
+    });
+    expect(started.ok).toBe(true);
+    if (!started.ok) return;
+    const runningRevision = viewOf(manager, started.value.jobId).revision;
+    release();
+    await until(() => viewOf(manager, started.value.jobId).terminal);
+    expect(viewOf(manager, started.value.jobId).revision).toBeGreaterThan(runningRevision);
+  });
+
+  test("reason summary copy is revision-checked and restricted to the job", () => {
+    const environment = deps();
+    const manager = new JobManager(environment);
+    const job = manager as unknown as { jobs: Map<number, any> };
+    job.jobs.set(1, {
+      id: 1,
+      source: "wayback",
+      collection: { revision: 3 },
+      reasons: [
+        { code: "parse_line", message: "1 行被跳过", source: "wayback", count: 1, page: 0 },
+      ],
+      terminal: true,
+    });
+
+    const stale = manager.copyReasons({ jobId: 1, source: "wayback", revision: 2 });
+    expect(stale.ok).toBe(false);
+
+    const copied = manager.copyReasons({ jobId: 1, source: "wayback", revision: 3 });
+    expect(copied.ok).toBe(true);
+    if (copied.ok) {
+      expect(copied.value.outcome.reasonCount).toBe(1);
+      expect(copied.value.text).toContain("parse_line");
+    }
+
+    const wrongSource = manager.copyReasons({ jobId: 1, source: "commoncrawl", revision: 3 });
+    expect(wrongSource.ok).toBe(false);
+  });
 });
+
+function indexMeta(): any {
+  return {
+    id: "CC-MAIN-TEST",
+    cdxApi: "https://index.commoncrawl.org/CC-MAIN-TEST-index",
+    fromMs: Date.UTC(2025, 7, 1),
+    toMs: Date.UTC(2025, 9, 1),
+    unknown: false,
+    fromRaw: "20250801000000",
+    toRaw: "20251001000000",
+  };
+}

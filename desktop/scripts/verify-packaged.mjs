@@ -1,7 +1,10 @@
 /**
  * Verify the built Windows package actually launches and runs the offline data flow.
- * Uses only the packaged executable plus a loopback fixture server (no Node/Python needed
- * for the app itself; Node here is only the test driver).
+ * Uses only the packaged executable plus a loopback fixture server (no Node/Python
+ * needed for the app itself; Node here is only the test driver).
+ *
+ * State and row-count assertions are retryable predicates (no fixed sleeps), so a
+ * partial task can never satisfy the "completed" check.
  */
 import http from "node:http";
 import path from "node:path";
@@ -57,6 +60,15 @@ const app = await electron.launch({
   },
 });
 
+async function waitForCondition(page, label, predicate, timeoutMs = 20_000) {
+  const started = Date.now();
+  while (Date.now() - started < timeoutMs) {
+    if (await predicate()) return;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  throw new Error(`timed out waiting for ${label}`);
+}
+
 try {
   const page = await app.firstWindow();
   await page.waitForSelector('[data-testid="target-input"]');
@@ -65,12 +77,25 @@ try {
 
   await page.fill('[data-testid="target-input"]', "example.com");
   await page.click('[data-testid="start-button"]');
-  await page.waitForSelector('[data-testid="status-chip"]:has-text("完成")', { timeout: 20_000 });
+
+  // Exact terminal text: "部分完成" must never satisfy this wait.
+  await waitForCondition(page, "terminal status 完成", async () => {
+    const text = await page.locator('[data-testid="status-chip"]').textContent();
+    return (text || "").trim() === "完成";
+  });
+  await waitForCondition(page, "3 result rows", async () => {
+    return (await page.locator("#rows-body tr").count()) === 3;
+  });
+
   const rowCount = await page.locator("#rows-body tr").count();
   if (rowCount !== 3) throw new Error(`expected 3 rows, got ${rowCount}`);
 
   await page.click('[data-testid="export-csv"]');
-  await page.waitForSelector('[data-testid="notice"]:has-text("已导出 3 条记录")', { timeout: 10_000 });
+  await waitForCondition(page, "export notice", async () => {
+    const text = await page.locator('[data-testid="notice"]').textContent();
+    return (text || "").trim() === "已导出 3 条记录。";
+  });
+
   const files = (await fs.readdir(exportDir)).filter((name) => name.endsWith(".csv"));
   if (files.length !== 1) throw new Error(`expected one export file, got ${files.length}`);
   const csv = await fs.readFile(path.join(exportDir, files[0]));

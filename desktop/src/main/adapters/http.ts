@@ -1,6 +1,7 @@
 /** HTTP helpers on top of an injected transport (Electron session.fetch in production). */
 
 import { AppError } from "../../application/errors";
+import { DEFAULT_JOB_BUDGETS } from "../../application/budgets";
 import type { RequestOptions, Transport } from "../../application/ports";
 
 export interface TextResponse {
@@ -30,6 +31,14 @@ export async function fetchText(
   try {
     const response = await transport(url, { signal: controller.signal });
     const text = await response.text();
+    const limit = options.maxResponseBytes ?? DEFAULT_JOB_BUDGETS.maxResponseBytes;
+    const bytes = Buffer.byteLength(text, "utf8");
+    if (bytes > limit) {
+      throw new AppError("PARSE", `响应体超过 ${limit} 字节上限，已中止读取`, {
+        retryable: false,
+        context: { bytes, limit },
+      });
+    }
     if (response.status >= 400) {
       throw new AppError("NETWORK", `HTTP ${response.status}`, { retryable: response.status >= 500 });
     }

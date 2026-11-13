@@ -114,6 +114,18 @@ test.describe("result collection (T4/R1)", () => {
     expect(results.page(99, 1).pageIndex).toBe(1);
   });
 
+  test("page rows expose the shared interesting-path flag", () => {
+    const results = new ResultCollection([
+      rawRecord("https://example.com/backup.sql"),
+      rawRecord("https://example.com/index.html"),
+    ]);
+
+    const rows = results.page(0, 10).rows;
+
+    expect(rows[0].interesting).toBe(true);
+    expect(rows[1].interesting).toBe(false);
+  });
+
   test("revision advances on reset/append and stays stable for filter changes", () => {
     const results = collection();
     const firstRevision = results.revision;

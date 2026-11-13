@@ -6,6 +6,8 @@ import {
   SCHEMA_VERSION,
   WAYBACK_BUDGET,
   type CancelQueryRequest,
+  type CopyReasonsOutcome,
+  type CopyReasonsRequest,
   type CopyRequest,
   type ExportRequest,
   type ExportField,
@@ -30,6 +32,7 @@ import { normalizeTarget } from "../domain/target";
 import { toExportRow, type ArchiveRecord } from "../domain/record";
 import { AppError, errorFromUnknown, isTerminal } from "./errors";
 import type { JobDeps, JobSession, RequestOptions } from "./ports";
+import { resolveBudgets, type JobBudgets } from "./budgets";
 
 interface JobRuntime {
   id: number;
@@ -60,8 +63,13 @@ export class JobManager {
   private jobs = new Map<number, JobRuntime>();
   private nextId = 1;
   private activeId: number | null = null;
+  private slotReserved = false;
+  private closed = false;
+  private readonly budgets: JobBudgets;
 
-  constructor(private readonly deps: JobDeps) {}
+  constructor(private readonly deps: JobDeps) {
+    this.budgets = resolveBudgets(deps.budgets);
+  }
 
   get activeJobId(): number | null {
     return this.activeId;
@@ -75,64 +83,83 @@ export class JobManager {
   }
 
   async start(request: StartQueryRequest): Promise<Result<{ jobId: number; source: SourceId; scope: JobScopeView }>> {
-    if (this.activeId !== null) {
-      const active = this.jobs.get(this.activeId);
-      if (active && !active.terminal) {
-        const busy = new AppError("BUSY", BUSY_MESSAGE);
-        return { ok: false, error: busy.toDto() };
-      }
+    if (this.closed) {
+      return { ok: false, error: { code: "CLOSED", message: "窗口正在关闭，不能开始新的查询" } };
     }
-
-    const target = normalizeTarget(request.target);
-    if (!target.ok) {
-      return { ok: false, error: { code: "INVALID_INPUT", message: target.message } };
+    // Reserve the single-task slot before any await so concurrent starts cannot
+    // both pass the BUSY check; all non-terminal jobs (including orphans) block.
+    if (this.slotReserved || this.hasNonTerminalJob()) {
+      return { ok: false, error: new AppError("BUSY", BUSY_MESSAGE).toDto() };
     }
-    const range: RangeSpec = request.range;
-    const clock = this.deps.clock();
-    const selection = resolveRange(range, clock);
-    const jobId = this.nextId++;
-
-    let session: JobSession;
+    this.slotReserved = true;
     try {
-      session = await this.deps.sessions.create(jobId, request.proxy);
-    } catch (error) {
-      const failure = error instanceof AppError ? error : errorFromUnknown(error, request.source);
-      return { ok: false, error: failure.toDto() };
+      if (this.closed) {
+        return { ok: false, error: { code: "CLOSED", message: "窗口正在关闭，不能开始新的查询" } };
+      }
+      const target = normalizeTarget(request.target);
+      if (!target.ok) {
+        return { ok: false, error: { code: "INVALID_INPUT", message: target.message } };
+      }
+      const range: RangeSpec = request.range;
+      const clock = this.deps.clock();
+      const selection = resolveRange(range, clock);
+      const jobId = this.nextId++;
+
+      let session: JobSession;
+      try {
+        session = await this.deps.sessions.create(jobId, request.proxy);
+      } catch (error) {
+        const failure = error instanceof AppError ? error : errorFromUnknown(error, request.source);
+        return { ok: false, error: failure.toDto() };
+      }
+      if (this.closed) {
+        await this.deps.sessions.close(jobId).catch(() => undefined);
+        return { ok: false, error: { code: "CLOSED", message: "窗口正在关闭，任务已取消" } };
+      }
+
+      const config: FrozenJobConfig = {
+        target: target.scope,
+        source: request.source,
+        range,
+        clockUtc: clock.toISOString(),
+        selection,
+        proxy: session.proxy,
+        budget:
+          request.source === "wayback"
+            ? { maxPages: WAYBACK_BUDGET.maxPages, pageSize: WAYBACK_BUDGET.pageSize }
+            : { maxPages: CC_BUDGET.maxPagesPerIndex, pageSize: CC_BUDGET.pageSize },
+      };
+
+      const job: JobRuntime = {
+        id: jobId,
+        source: request.source,
+        config,
+        collection: new ResultCollection(),
+        status: "preparing",
+        seq: 0,
+        received: 0,
+        reasons: [],
+        completion: "unknown",
+        terminal: false,
+        controller: new AbortController(),
+        session,
+      };
+      this.jobs.set(jobId, job);
+      this.activeId = jobId;
+      this.emitState(job, "preparing");
+
+      void this.run(job);
+      return { ok: true, value: { jobId, source: job.source, scope: this.scopeOf(job) } };
+    } finally {
+      this.slotReserved = false;
     }
+  }
 
-    const config: FrozenJobConfig = {
-      target: target.scope,
-      source: request.source,
-      range,
-      clockUtc: clock.toISOString(),
-      selection,
-      proxy: session.proxy,
-      budget:
-        request.source === "wayback"
-          ? { maxPages: WAYBACK_BUDGET.maxPages, pageSize: WAYBACK_BUDGET.pageSize }
-          : { maxPages: CC_BUDGET.maxPagesPerIndex, pageSize: CC_BUDGET.pageSize },
-    };
-
-    const job: JobRuntime = {
-      id: jobId,
-      source: request.source,
-      config,
-      collection: new ResultCollection(),
-      status: "preparing",
-      seq: 0,
-      received: 0,
-      reasons: [],
-      completion: "unknown",
-      terminal: false,
-      controller: new AbortController(),
-      session,
-    };
-    this.jobs.set(jobId, job);
-    this.activeId = jobId;
-    this.emitState(job, "preparing");
-
-    void this.run(job);
-    return { ok: true, value: { jobId, source: job.source, scope: this.scopeOf(job) } };
+  private hasNonTerminalJob(): boolean {
+    for (const job of this.jobs.values()) {
+      if (!job.terminal) return true;
+    }
+    return false;
   }
 
   cancel(request: CancelQueryRequest): Result<{ status: JobStatus }> {
@@ -204,7 +231,33 @@ export class JobManager {
     return { ok: true, value: { copiedCount: records.length, text } };
   }
 
+  /** Restricted bridge: main builds the reason summary and writes the clipboard. */
+  copyReasons(request: CopyReasonsRequest): Result<{ text: string; outcome: CopyReasonsOutcome }> {
+    const job = this.jobs.get(request.jobId);
+    if (!job || job.source !== request.source) {
+      return { ok: false, error: { code: "STALE_VIEW", message: "任务不存在或已被替换" } };
+    }
+    if (job.collection.revision !== request.revision) {
+      return { ok: false, error: { code: "STALE_VIEW", message: "结果已更新，请刷新后重试" } };
+    }
+    const lines = job.reasons.map((reason) => {
+      const where = [reason.indexId, reason.page !== undefined ? `第${reason.page + 1}页` : ""]
+        .filter(Boolean)
+        .join(" ");
+      const count = reason.count ? ` ×${reason.count}` : "";
+      return `${reason.code}${where ? ` ${where}` : ""}${count}：${reason.message}`;
+    });
+    return {
+      ok: true,
+      value: {
+        text: lines.join("\r\n"),
+        outcome: { copiedCount: lines.length, reasonCount: job.reasons.length },
+      },
+    };
+  }
+
   closeAll(): void {
+    this.closed = true;
     for (const job of this.jobs.values()) {
       if (!job.terminal) {
         job.controller.abort();
@@ -212,6 +265,9 @@ export class JobManager {
         job.status = "stopped";
         job.completion = job.collection.matched() > 0 ? "partial" : "unknown";
       }
+      // Idempotent cleanup: close every task session, including already-terminal
+      // ones, so window close releases connections and caches.
+      void this.deps.sessions.close(job.id).catch(() => undefined);
     }
   }
 
@@ -265,6 +321,7 @@ export class JobManager {
       signal: job.controller.signal,
       timeoutMs: 30_000,
       transport: job.session.transport,
+      maxResponseBytes: this.budgets.maxResponseBytes,
     };
     try {
       this.setStatus(job, "running");
@@ -315,10 +372,10 @@ export class JobManager {
         return;
       }
       if (result.records.length === 0) break;
-      const outcome = job.collection.append(result.records);
-      job.received += result.records.length;
+      const outcome = this.appendRecords(job, result.records);
       for (const reason of result.reasons) this.addReason(job, reason);
       this.emitProgress(job, { page: page + 1, added: outcome.added });
+      if (outcome.truncated > 0) return;
       if (!result.hasMore) break;
       if (page === maxPages - 1) {
         this.addReason(job, {
@@ -335,14 +392,21 @@ export class JobManager {
 
   private async runCommonCrawl(job: JobRuntime, options: RequestOptions): Promise<void> {
     const host = job.config.target.host;
-    const { metas } = await this.deps.commoncrawl.fetchIndexes(options);
+    const { metas, invalidCount } = await this.deps.commoncrawl.fetchIndexes(options);
     const selection = selectIndexes(metas, job.config.selection);
-    if (selection.unknownExcluded > 0) {
+    if (selection.unknownExcluded > 0 || invalidCount > 0) {
+      const parts = [];
+      if (selection.unknownExcluded > 0) {
+        parts.push(`${selection.unknownExcluded} 个索引时间元数据未知，已排除`);
+      }
+      if (invalidCount > 0) {
+        parts.push(`${invalidCount} 个索引条目缺失/非法，已忽略`);
+      }
       this.addReason(job, {
         code: "range_unknown",
-        message: `${selection.unknownExcluded} 个索引缺少官方时间元数据，已排除`,
+        message: parts.join("；"),
         source: "commoncrawl",
-        count: selection.unknownExcluded,
+        count: selection.unknownExcluded + invalidCount,
       });
       job.completion = "partial";
     }
@@ -371,7 +435,8 @@ export class JobManager {
     }
     for (const index of selection.indexes) {
       if (options.signal.aborted) return;
-      await this.runOneIndex(job, index, host, options);
+      const completed = await this.runOneIndex(job, index, host, options);
+      if (!completed) return;
     }
   }
 
@@ -380,12 +445,12 @@ export class JobManager {
     index: CcIndexMeta,
     host: string,
     options: RequestOptions,
-  ): Promise<void> {
+  ): Promise<boolean> {
     let totalPages: number;
     try {
       totalPages = await this.deps.commoncrawl.pageCount(index, host, options);
     } catch (error) {
-      if (options.signal.aborted) return;
+      if (options.signal.aborted) return false;
       this.addReason(job, {
         code: "network",
         message: `索引 ${index.id} 页数查询失败`,
@@ -394,17 +459,19 @@ export class JobManager {
         retryable: true,
       });
       job.completion = "partial";
-      return;
+      return true;
     }
-    if (totalPages <= 0) return;
+    if (totalPages <= 0) return true;
     const pagesToFetch = Math.min(totalPages, CC_BUDGET.maxPagesPerIndex);
+    let pagesFetched = 0;
+    let lastPageHadRecords = false;
     for (let page = 0; page < pagesToFetch; page += 1) {
-      if (options.signal.aborted) return;
+      if (options.signal.aborted) return false;
       let result;
       try {
         result = await this.deps.commoncrawl.queryPage(index, host, page, CC_BUDGET.pageSize, options);
       } catch (error) {
-        if (options.signal.aborted) return;
+        if (options.signal.aborted) return false;
         this.addReason(job, {
           code: "network",
           message: `索引 ${index.id} 第 ${page + 1} 页读取失败`,
@@ -414,18 +481,23 @@ export class JobManager {
           retryable: true,
         });
         job.completion = "partial";
-        return;
+        return true;
       }
-      const outcome = job.collection.append(
+      pagesFetched += 1;
+      lastPageHadRecords = result.records.length > 0;
+      const outcome = this.appendRecords(
+        job,
         result.records.map((item) => ({ ...item, indexId: index.id })),
       );
-      job.received += result.records.length;
       for (const reason of result.reasons) this.addReason(job, reason);
       this.emitProgress(job, { indexId: index.id, page: page + 1, added: outcome.added });
-      if (result.records.length === 0) break;
+      if (outcome.truncated > 0) return false;
+      if (!lastPageHadRecords) break;
       if (page < pagesToFetch - 1) await this.wait(1_000, options.signal);
     }
-    if (pagesToFetch < totalPages) {
+    // Only report a real cap hit: the cap pages were consumed and the last of
+    // them still had records, so more pages exist.
+    if (pagesToFetch < totalPages && pagesFetched >= pagesToFetch && lastPageHadRecords) {
       this.addReason(job, {
         code: "page_limit",
         message: `索引 ${index.id} 达到 ${CC_BUDGET.maxPagesPerIndex} 页上限`,
@@ -434,6 +506,28 @@ export class JobManager {
       });
       job.completion = "partial";
     }
+    return true;
+  }
+
+  private appendRecords(
+    job: JobRuntime,
+    records: Array<Omit<ArchiveRecord, "rowId">>,
+  ): { added: number; truncated: number } {
+    const remaining = Math.max(0, this.budgets.maxTaskRecords - job.collection.total);
+    const accepted = records.length > remaining ? records.slice(0, remaining) : records;
+    const truncated = records.length - accepted.length;
+    const outcome = job.collection.append(accepted);
+    job.received += accepted.length;
+    if (truncated > 0) {
+      this.addReason(job, {
+        code: "record_limit",
+        message: `已达到 ${this.budgets.maxTaskRecords} 条记录预算，本次丢弃 ${truncated} 条`,
+        source: job.source,
+        count: truncated,
+      });
+      job.completion = "partial";
+    }
+    return { added: outcome.added, truncated };
   }
 
   private wait(ms: number, signal: AbortSignal): Promise<void> {
@@ -476,6 +570,9 @@ export class JobManager {
     job.terminal = true;
     job.completion = completion;
     job.status = status;
+    // A terminal transition changes the data version (ADR contract), so any
+    // snapshot/export taken after completion carries the new revision.
+    job.collection.invalidate();
     this.emitState(job, status);
     // The terminal state is emitted only after the collection is final; a paired
     // viewChanged with the same revision lets the UI refresh without sleeping or
@@ -488,7 +585,22 @@ export class JobManager {
         unique: job.collection.total,
       }),
     );
+    this.pruneHistory();
     void this.deps.sessions.close(job.id).catch(() => undefined);
+  }
+
+  private pruneHistory(): void {
+    const max = this.budgets.maxRetainedJobs;
+    if (this.jobs.size <= max) return;
+    const removable = [...this.jobs.values()]
+      .filter((job) => job.terminal && job.id !== this.activeId)
+      .sort((left, right) => left.id - right.id);
+    let excess = this.jobs.size - max;
+    for (const job of removable) {
+      if (excess <= 0) break;
+      this.jobs.delete(job.id);
+      excess -= 1;
+    }
   }
 
   private setStatus(job: JobRuntime, status: JobStatus): void {

@@ -104,19 +104,30 @@ node tests/integration/run-proxy-nonloopback.mjs
   排序稳定；导出使用当前筛选排序的全量不可变快照。
 - 导出：五字段 `timestamp,status_code,length,file_type,url`，CSV UTF-8 BOM + CRLF，
   JSON UTF-8 数组；内部 source/rawTimestamp/indexId 与行号不导出；同目录临时文件 + rename。
-- 任务：单任务串行；`jobId/source/seq/revision` 归属；终态只发一次；停止保留已收记录；
-  旧任务/跨来源事件不写入新集合；窗口关闭先取消并停止后续调度。
+- 任务：单任务串行；`startQuery` 在任何 await 之前原子占用唯一任务槽，失败回滚，
+  BUSY 覆盖所有未终态任务；窗口关闭期间/之后拒绝新建任务。`jobId/source/seq/revision`
+  归属；终态只发一次且递增 revision，随后发同 revision 的 `viewChanged`；停止保留已收记录；
+  旧任务/跨来源事件不写入新集合；`closeAll` 幂等关闭每个任务 session 并停止后续调度。
+- 范围与预算：保留既有查询预算（Wayback ≤20×50、CC ≤5 页/pageSize=5）不扩大；
+  额外有限资源预算：单响应 ≤8 MiB、单任务 ≤50,000 条记录、历史保留 ≤20 个终态任务；
+  响应/记录超限记 `record_limit` 原因并落 `partial`，不静默丢弃。
 - 网络：每任务独立 Electron session 分区，`setProxy` 完成后才请求；代理失败即失败，
   不回退直连；请求有独立 deadline，取消中止在途请求。
 - 代理认证：固定代理 URL 中的 `user:pass@` 只用于内存中的每任务凭据，通过 Chromium
-  代理挑战（`ClientRequest` 的 `login` 事件）按需应答；代理规则、`ProxySnapshot`、
-  错误文本与日志都不含凭据。SOCKS 认证 Chromium 不支持，启动任务时明确拒绝并给出
-  可理解原因，不会静默直连。生产代理配置保留 Chromium 默认的 loopback bypass；
-  环回代理成功与真实代理成功分开验证（非环回用本机非 loopback 地址夹具）。
+  代理挑战（`ClientRequest` 的 `login` 事件）按需应答，且只应答匹配该代理 host:port
+  的挑战；代理规则、`ProxySnapshot`、错误文本与日志都不含凭据。SOCKS 认证 Chromium
+  不支持，启动任务时明确拒绝并给出可理解原因，不会静默直连。生产代理配置保留 Chromium
+  默认的 loopback bypass；环回代理成功与真实代理成功分开验证（非环回用本机非 loopback
+  地址夹具）。
+- 来源约束：CC 只接受官方 `https://index.commoncrawl.org` 或与配置索引同源的 `cdx-api`；
+  其余端点按非法元数据计数并给 `range_unknown` 原因。
 
 IPC 方法：`archive:startQuery`、`archive:cancelQuery`、`archive:getView`、
-`archive:exportResults`、`archive:copySelection`，事件通道 `archive:jobEvent`。
-所有输入在 main 做运行时校验，统一返回 `{ok:true,value}` / `{ok:false,error}`。
+`archive:exportResults`、`archive:copySelection`、`archive:copyReasons`，事件通道
+`archive:jobEvent`。所有输入在 main 做运行时校验，校验发送方 `webContents` 与
+`senderFrame`，统一返回 `{ok:true,value}` / `{ok:false,error}`；默认 session
+显式拒绝所有权限请求。`copyReasons` 只按 `jobId/source/revision` 取该任务原因并由
+主进程写剪贴板，不开放任意 IPC 或任意文本剪贴板。
 
 ## 已知缺口
 
@@ -128,9 +139,10 @@ IPC 方法：`archive:startQuery`、`archive:cancelQuery`、`archive:getView`、
 - CC 官方 `from/to` 语义按官方 collinfo 元数据实现，未联网核对真实索引样本。
 - 界面在 125% 缩放的 2048×1152 屏幕上以 1202×680、1040×620 内容尺寸实测，
   未在真实 1366×768 物理显示器、100% 缩放下人工走查；macOS/Linux 未验证。
-- 逐行“敏感路径高亮”未实现：`RowView` 没有 `interesting` 标记，界面不重复实现
-  域名层规则，只用服务端 `interestingOnly` 筛选；需要高亮需在该契约加字段。
+- 逐行“敏感路径高亮”契约已提供：`RowView.interesting` 由 domain 规则计算；界面接线
+  待前端补。
+- 原因摘要复制已提供受限 `copyReasons` 桥（jobId/source/revision，主进程写剪贴板），
+  界面接线待前端补；当前界面仍用 `document.execCommand`。
 - 域名筛选的下拉提示仅来自当前页出现的域名，不代表全量域名清单。
-- 原因摘要复制使用 `document.execCommand("copy")`（无剪贴板桥接），未做权限失败场景。
 - 打包未签名；未打 NSIS/MSI；未在无 Node 的干净 Windows 机器做人工验收（本地已用
   打包后的 exe 受控启动验证）。

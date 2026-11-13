@@ -136,7 +136,7 @@ export class WaybackAdapter implements WaybackPort {
     const parsed = parseRows(response.text);
     return {
       records: parsed.records,
-      hasMore: parsed.records.length >= pageSize,
+      hasMore: parsed.rowCount >= pageSize,
       parseSkipped: parsed.reasons.reduce((sum, reason) => sum + (reason.count ?? 0), 0),
       reasons: parsed.reasons,
     };

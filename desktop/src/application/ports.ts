@@ -19,6 +19,8 @@ export interface RequestOptions {
   signal: AbortSignal;
   timeoutMs: number;
   transport: Transport;
+  /** Maximum accepted response size in bytes (bounded resource policy). */
+  maxResponseBytes?: number;
 }
 
 export interface PageResult {
@@ -29,7 +31,7 @@ export interface PageResult {
 }
 
 export interface CommonCrawlPort {
-  fetchIndexes(options: RequestOptions): Promise<{ metas: CcIndexMeta[] }>;
+  fetchIndexes(options: RequestOptions): Promise<{ metas: CcIndexMeta[]; invalidCount: number }>;
   pageCount(index: CcIndexMeta, host: string, options: RequestOptions): Promise<number>;
   queryPage(
     index: CcIndexMeta,
@@ -61,7 +63,6 @@ export interface JobDeps {
   commoncrawl: CommonCrawlPort;
   sessions: SessionFactory;
   emit: (event: import("../contracts/types").JobEventDto) => void;
-  waybackRequestTimeoutMs?: number;
-  commonCrawlRequestTimeoutMs?: number;
+  budgets?: Partial<import("./budgets").JobBudgets>;
   source?: SourceId;
 }

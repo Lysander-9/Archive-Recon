@@ -1,6 +1,7 @@
 /** Internal archive record plus the five-field export/display projection. */
 
 import { EXPORT_FIELDS, type ExportField, type RowView, type SourceId } from "../contracts/types";
+import { isInterestingUrl } from "./matching";
 
 export interface RawArchiveRecord {
   url: string;
@@ -48,6 +49,7 @@ export function toRowView(record: ArchiveRecord): RowView {
     length: record.length,
     fileType: record.fileType,
     url: record.url,
+    interesting: isInterestingUrl(record.url),
   };
 }
 

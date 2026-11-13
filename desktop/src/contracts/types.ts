@@ -133,6 +133,8 @@ export interface RowView {
   length: string;
   fileType: string;
   url: string;
+  /** True when the row matches the shared "interesting path" rules (P1 highlight). */
+  interesting: boolean;
 }
 
 export interface ReasonDto {
@@ -230,6 +232,19 @@ export interface CopyRequest {
 
 export interface CopyOutcome {
   copiedCount: number;
+}
+
+/** Restricted clipboard bridge for the current job's incomplete reasons. */
+export interface CopyReasonsRequest {
+  jobId: number;
+  source: SourceId;
+  revision: number;
+}
+
+export interface CopyReasonsOutcome {
+  /** Number of reasons written; 0 means there was nothing to copy. */
+  copiedCount: number;
+  reasonCount: number;
 }
 
 export interface JobEventDto {

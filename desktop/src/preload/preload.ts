@@ -5,6 +5,8 @@ import { CHANNELS } from "../contracts/channels";
 import type {
   CancelQueryRequest,
   CopyOutcome,
+  CopyReasonsOutcome,
+  CopyReasonsRequest,
   CopyRequest,
   ExportOutcome,
   ExportRequest,
@@ -21,6 +23,7 @@ export interface ArchiveReconBridge {
   getView(request: GetViewRequest): Promise<Result<JobView>>;
   exportResults(request: ExportRequest): Promise<Result<ExportOutcome>>;
   copySelection(request: CopyRequest): Promise<Result<CopyOutcome>>;
+  copyReasons(request: CopyReasonsRequest): Promise<Result<CopyReasonsOutcome>>;
   onJobEvent(listener: (event: JobEventDto) => void): () => void;
 }
 
@@ -30,6 +33,7 @@ const bridge: ArchiveReconBridge = {
   getView: (request) => ipcRenderer.invoke(CHANNELS.getView, request),
   exportResults: (request) => ipcRenderer.invoke(CHANNELS.exportResults, request),
   copySelection: (request) => ipcRenderer.invoke(CHANNELS.copySelection, request),
+  copyReasons: (request) => ipcRenderer.invoke(CHANNELS.copyReasons, request),
   onJobEvent: (listener) => {
     const wrapped = (_event: unknown, payload: JobEventDto): void => listener(payload);
     ipcRenderer.on(CHANNELS.jobEvent, wrapped as never);

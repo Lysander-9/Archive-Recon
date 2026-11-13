@@ -13,6 +13,8 @@ export const DEFAULT_CC_BASE = "https://index.commoncrawl.org";
 
 interface CommonCrawlAdapterOptions {
   indexBaseUrl?: string;
+  /** Test-only: allow http cdx-api endpoints on the same origin as indexBaseUrl. */
+  allowInsecureCdxApi?: boolean;
 }
 
 function withParams(urlText: string, params: Record<string, string>): string {
@@ -82,12 +84,38 @@ function parseNdjson(
 
 export class CommonCrawlAdapter implements CommonCrawlPort {
   private readonly indexBaseUrl: string;
+  private readonly allowInsecureCdxApi: boolean;
 
   constructor(options: CommonCrawlAdapterOptions = {}) {
     this.indexBaseUrl = (options.indexBaseUrl ?? DEFAULT_CC_BASE).replace(/\/+$/, "");
+    this.allowInsecureCdxApi = options.allowInsecureCdxApi === true;
   }
 
-  async fetchIndexes(options: RequestOptions): Promise<{ metas: CcIndexMeta[] }> {
+  /** Only official Common Crawl or the configured index origin may serve cdx-api. */
+  private isValidCdxApi(raw: string): boolean {
+    let url: URL;
+    try {
+      url = new URL(raw);
+    } catch {
+      return false;
+    }
+    if (url.username || url.password) return false;
+    if (url.search || url.hash) return false;
+    if (url.protocol === "https:" && url.hostname === "index.commoncrawl.org") return true;
+    try {
+      const base = new URL(this.indexBaseUrl);
+      if (url.origin === base.origin) {
+        return url.protocol === "https:" || this.allowInsecureCdxApi;
+      }
+    } catch {
+      return false;
+    }
+    return false;
+  }
+
+  async fetchIndexes(
+    options: RequestOptions,
+  ): Promise<{ metas: CcIndexMeta[]; invalidCount: number }> {
     const url = `${this.indexBaseUrl}/collinfo.json`;
     const response = await fetchText(options.transport, url, options);
     let data: unknown;
@@ -97,10 +125,17 @@ export class CommonCrawlAdapter implements CommonCrawlPort {
       throw new Error("collinfo.json 不是有效 JSON");
     }
     if (!Array.isArray(data)) throw new Error("collinfo.json 不是数组");
-    const metas = data
-      .map((item) => parseCcIndex(item))
-      .filter((item): item is CcIndexMeta => item !== null);
-    return { metas };
+    const metas: CcIndexMeta[] = [];
+    let invalidCount = 0;
+    for (const item of data) {
+      const meta = parseCcIndex(item);
+      if (!meta || !this.isValidCdxApi(meta.cdxApi)) {
+        invalidCount += 1;
+        continue;
+      }
+      metas.push(meta);
+    }
+    return { metas, invalidCount };
   }
 
   async pageCount(index: CcIndexMeta, host: string, options: RequestOptions): Promise<number> {

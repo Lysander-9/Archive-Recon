@@ -2,7 +2,7 @@
 
 import { promises as fs } from "node:fs";
 import path from "node:path";
-import { app, BrowserWindow, clipboard, dialog, ipcMain, type IpcMainInvokeEvent } from "electron";
+import { app, BrowserWindow, clipboard, dialog, ipcMain, session as electronSession, type IpcMainInvokeEvent } from "electron";
 
 import { JobManager } from "../application/job";
 import { AppError } from "../application/errors";
@@ -29,7 +29,15 @@ function toError(error: unknown): Result<never> {
 }
 
 function guardSender(event: IpcMainInvokeEvent): void {
-  if (!mainWindow || event.sender !== mainWindow.webContents) {
+  const frame = event.senderFrame;
+  const expectedFrame = mainWindow?.webContents.mainFrame;
+  if (
+    !mainWindow ||
+    event.sender !== mainWindow.webContents ||
+    !frame ||
+    !expectedFrame ||
+    frame !== expectedFrame
+  ) {
     throw new AppError("CLOSED", "拒绝非主窗口调用");
   }
 }
@@ -69,7 +77,10 @@ function registerIpc(window: BrowserWindow): void {
   manager = new JobManager({
     clock: () => new Date(),
     wayback: new WaybackAdapter({ baseUrl: WAYBACK_URL }),
-    commoncrawl: new CommonCrawlAdapter({ indexBaseUrl: CC_BASE_URL }),
+    commoncrawl: new CommonCrawlAdapter({
+      indexBaseUrl: CC_BASE_URL,
+      allowInsecureCdxApi: TEST_MODE,
+    }),
     sessions,
     emit: (event: JobEventDto) => {
       if (window.isDestroyed() || window.webContents.isDestroyed()) return;
@@ -132,6 +143,20 @@ function registerIpc(window: BrowserWindow): void {
       return toError(error);
     }
   });
+
+  ipcMain.handle(CHANNELS.copyReasons, (event, raw) => {
+    try {
+      guardSender(event);
+      const parsed = validate.validateCopyReasons(raw);
+      if (!parsed.ok) return parsed;
+      const result = (manager as JobManager).copyReasons(parsed.value);
+      if (!result.ok) return result;
+      if (result.value.outcome.copiedCount > 0) clipboard.writeText(result.value.text);
+      return { ok: true as const, value: result.value.outcome };
+    } catch (error) {
+      return toError(error);
+    }
+  });
 }
 
 function createWindow(): BrowserWindow {
@@ -164,6 +189,12 @@ function createWindow(): BrowserWindow {
 }
 
 app.whenReady().then(() => {
+  const defaultSession = electronSession.defaultSession;
+  // Explicit denial: the app needs no camera, microphone, notifications, etc.
+  defaultSession.setPermissionRequestHandler((_webContents, _permission, callback) => {
+    callback(false);
+  });
+  defaultSession.setPermissionCheckHandler(() => false);
   mainWindow = createWindow();
 });
 

@@ -4,6 +4,7 @@ import {
   EMPTY_FILTER,
   SOURCES,
   type CancelQueryRequest,
+  type CopyReasonsRequest,
   type CopyRequest,
   type ExportRequest,
   type FilterSpec,
@@ -217,5 +218,22 @@ export function validateCopy(raw: unknown): Result<CopyRequest> {
       rowIds: input.rowIds as string[],
       mode: input.mode,
     },
+  };
+}
+
+export function validateCopyReasons(raw: unknown): Result<CopyReasonsRequest> {
+  const ref = validateJobRef(raw);
+  if (!ref.ok) return ref;
+  const input = raw as Record<string, unknown>;
+  if (
+    typeof input.revision !== "number" ||
+    !Number.isInteger(input.revision) ||
+    input.revision < 0
+  ) {
+    return fail("revision 必须是 >=0 的整数");
+  }
+  return {
+    ok: true,
+    value: { jobId: ref.value.jobId, source: ref.value.source, revision: input.revision },
   };
 }
