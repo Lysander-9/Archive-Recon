@@ -1,6 +1,7 @@
 {
   "appId": "ai.multica.guidewire.archive-recon",
   "productName": "Archive Recon",
+  "copyright": "Copyright © 2026 Archive Recon",
   "directories": {
     "output": "release"
   },
@@ -20,10 +21,16 @@
       }
     ],
     "artifactName": "ArchiveRecon-${version}-win-x64.${ext}",
-    "signAndEditExecutable": false,
+    "icon": "assets/icon.ico",
+    "legalTrademarks": "Archive Recon",
+    "signExecutable": false,
     "verifyUpdateCodeSignature": false
   },
   "extraMetadata": {
-    "main": "dist/main/main.js"
+    "main": "dist/main/main.js",
+    "productName": "Archive Recon",
+    "author": {
+      "name": "Archive Recon"
+    }
   }
 }
