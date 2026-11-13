@@ -5,6 +5,7 @@
 
 import type { CommonCrawlPort, PageResult, RequestOptions } from "../../application/ports";
 import type { ReasonDto } from "../../contracts/types";
+import { AppError } from "../../application/errors";
 import { parseCcIndex, type CcIndexMeta } from "../../domain/time";
 import { formatTimestamp, type RawArchiveRecord } from "../../domain/record";
 import { fetchText } from "./http";
@@ -91,8 +92,8 @@ export class CommonCrawlAdapter implements CommonCrawlPort {
     this.allowInsecureCdxApi = options.allowInsecureCdxApi === true;
   }
 
-  /** Only official Common Crawl or the configured index origin may serve cdx-api. */
-  private isValidCdxApi(raw: string): boolean {
+  /** Only official Common Crawl or the configured index origin may serve requests. */
+  private isAllowedEndpoint(raw: string): boolean {
     let url: URL;
     try {
       url = new URL(raw);
@@ -100,7 +101,6 @@ export class CommonCrawlAdapter implements CommonCrawlPort {
       return false;
     }
     if (url.username || url.password) return false;
-    if (url.search || url.hash) return false;
     if (url.protocol === "https:" && url.hostname === "index.commoncrawl.org") return true;
     try {
       const base = new URL(this.indexBaseUrl);
@@ -113,18 +113,39 @@ export class CommonCrawlAdapter implements CommonCrawlPort {
     return false;
   }
 
+  /** cdx-api values must be allowed endpoints and carry no userinfo/query/hash. */
+  private isValidCdxApi(raw: string): boolean {
+    if (!this.isAllowedEndpoint(raw)) return false;
+    try {
+      const url = new URL(raw);
+      return !url.search && !url.hash;
+    } catch {
+      return false;
+    }
+  }
+
+  private withRedirectGuard(options: RequestOptions): RequestOptions {
+    return { ...options, validateRedirect: (target) => this.isAllowedEndpoint(target) };
+  }
+
   async fetchIndexes(
     options: RequestOptions,
   ): Promise<{ metas: CcIndexMeta[]; invalidCount: number }> {
     const url = `${this.indexBaseUrl}/collinfo.json`;
-    const response = await fetchText(options.transport, url, options);
+    const response = await fetchText(options.transport, url, this.withRedirectGuard(options));
     let data: unknown;
     try {
       data = JSON.parse(response.text);
     } catch {
-      throw new Error("collinfo.json 不是有效 JSON");
+      throw new AppError("PARSE", "collinfo.json 不是有效 JSON，无法确定索引范围", {
+        source: "commoncrawl",
+      });
     }
-    if (!Array.isArray(data)) throw new Error("collinfo.json 不是数组");
+    if (!Array.isArray(data)) {
+      throw new AppError("PARSE", "collinfo.json 不是索引数组，无法确定索引范围", {
+        source: "commoncrawl",
+      });
+    }
     const metas: CcIndexMeta[] = [];
     let invalidCount = 0;
     for (const item of data) {
@@ -145,7 +166,7 @@ export class CommonCrawlAdapter implements CommonCrawlPort {
       pageSize: "5",
       showNumPages: "true",
     });
-    const response = await fetchText(options.transport, url, options);
+    const response = await fetchText(options.transport, url, this.withRedirectGuard(options));
     let data: unknown;
     try {
       data = JSON.parse(response.text);
@@ -170,7 +191,7 @@ export class CommonCrawlAdapter implements CommonCrawlPort {
       page: String(page),
       pageSize: String(pageSize),
     });
-    const response = await fetchText(options.transport, url, options);
+    const response = await fetchText(options.transport, url, this.withRedirectGuard(options));
     const parsed = parseNdjson(response.text, index.id, page);
     return {
       records: parsed.records,

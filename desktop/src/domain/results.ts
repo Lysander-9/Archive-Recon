@@ -127,6 +127,11 @@ export class ResultCollection {
     return this.records.slice();
   }
 
+  /** Whether this exact URL was already accepted (used by the record budget). */
+  hasUrl(url: string): boolean {
+    return Boolean(url) && this.urls.has(url);
+  }
+
   view(): ArchiveRecord[] {
     if (this.cache) return this.cache.records;
     const filtered = applyFilter(this.records, this.filter);

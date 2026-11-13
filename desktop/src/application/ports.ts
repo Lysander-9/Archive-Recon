@@ -8,11 +8,17 @@ export interface HttpResponseLike {
   status: number;
   text(): Promise<string>;
   json(): Promise<unknown>;
+  /** Present when the transport did not follow a redirect (manual mode). */
+  location?: string;
 }
 
 export type Transport = (
   url: string,
-  init?: { signal?: AbortSignal; headers?: Record<string, string> },
+  init?: {
+    signal?: AbortSignal;
+    headers?: Record<string, string>;
+    onRedirect?: (targetUrl: string) => boolean;
+  },
 ) => Promise<HttpResponseLike>;
 
 export interface RequestOptions {
@@ -21,6 +27,12 @@ export interface RequestOptions {
   transport: Transport;
   /** Maximum accepted response size in bytes (bounded resource policy). */
   maxResponseBytes?: number;
+  /** Optional per-hop redirect validator; false aborts the request. */
+  validateRedirect?: (targetUrl: string) => boolean;
+}
+
+export interface JobLimits {
+  maxResponseBytes: number;
 }
 
 export interface PageResult {
@@ -53,7 +65,7 @@ export interface JobSession {
 
 export interface SessionFactory {
   /** Creates an isolated session, applies the proxy and never falls back to direct. */
-  create(jobId: number, proxy: ProxySpec): Promise<JobSession>;
+  create(jobId: number, proxy: ProxySpec, limits?: JobLimits): Promise<JobSession>;
   close(jobId: number): Promise<void>;
 }
 

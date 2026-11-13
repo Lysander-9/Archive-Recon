@@ -9,7 +9,7 @@
  */
 
 import { net, session as electronSession, type Session } from "electron";
-import type { HttpResponseLike, JobSession, SessionFactory, Transport } from "../application/ports";
+import type { HttpResponseLike, JobLimits, JobSession, SessionFactory, Transport } from "../application/ports";
 import type { ProxySpec } from "../contracts/types";
 import { AppError } from "../application/errors";
 import { DEFAULT_JOB_BUDGETS } from "../application/budgets";
@@ -34,6 +34,7 @@ function abortError(): DOMException {
 function createTransport(
   isolated: Session,
   credentials: ProxyCredentials | null,
+  maxResponseBytes: number,
 ): Transport {
   return (url, init) =>
     new Promise<HttpResponseLike>((resolve, reject) => {
@@ -42,11 +43,12 @@ function createTransport(
         return;
       }
       let settled = false;
+      let blockedRedirect = false;
       const request = net.request({
         url,
         session: isolated,
         method: "GET",
-        redirect: "follow",
+        redirect: init?.onRedirect ? "manual" : "follow",
         useSessionCookies: false,
       });
 
@@ -69,6 +71,21 @@ function createTransport(
       };
       init?.signal?.addEventListener("abort", onAbort, { once: true });
 
+      if (init?.onRedirect) {
+        request.on("redirect", (_status, _method, redirectUrl) => {
+          if (!init.onRedirect!(redirectUrl)) {
+            blockedRedirect = true;
+            try {
+              request.abort();
+            } catch {
+              // already aborted
+            }
+            return;
+          }
+          request.followRedirect();
+        });
+      }
+
       if (credentials) {
         request.on("login", (authInfo, callback) => {
           const matchesProxy =
@@ -90,7 +107,7 @@ function createTransport(
         response.on("data", (chunk: Buffer) => {
           if (settled) return;
           totalBytes += chunk.length;
-          if (totalBytes > DEFAULT_JOB_BUDGETS.maxResponseBytes) {
+          if (totalBytes > maxResponseBytes) {
             try {
               request.abort();
             } catch {
@@ -99,10 +116,10 @@ function createTransport(
             fail(
               new AppError(
                 "PARSE",
-                `响应体超过 ${DEFAULT_JOB_BUDGETS.maxResponseBytes} 字节上限，已中止读取`,
+                `响应体超过 ${maxResponseBytes} 字节上限，已中止读取`,
                 {
                   retryable: false,
-                  context: { limit: DEFAULT_JOB_BUDGETS.maxResponseBytes },
+                  context: { limit: maxResponseBytes },
                 },
               ),
             );
@@ -115,15 +132,27 @@ function createTransport(
           settled = true;
           cleanup();
           const body = Buffer.concat(chunks);
+          const location = response.headers?.location;
           resolve({
             status: response.statusCode,
             text: async () => body.toString("utf8"),
             json: async () => JSON.parse(body.toString("utf8")),
+            location: Array.isArray(location) ? location[0] : location,
           });
         });
         response.on("error", fail);
       });
-      request.on("error", fail);
+      request.on("error", (error) => {
+        if (blockedRedirect) {
+          fail(
+            new AppError("NETWORK", "重定向目标不在允许的官方端点内，已停止读取", {
+              retryable: false,
+            }),
+          );
+          return;
+        }
+        fail(error);
+      });
       request.end();
     });
 }
@@ -137,7 +166,7 @@ export function createElectronSessions(): ElectronSessionFactory {
 
   return {
     sessions,
-    async create(jobId: number, proxy: ProxySpec): Promise<JobSession> {
+    async create(jobId: number, proxy: ProxySpec, limits?: JobLimits): Promise<JobSession> {
       let parsed: ParsedProxyServer | null = null;
       let credentials: ProxyCredentials | null = null;
       if (proxy.mode === "fixed") {
@@ -170,7 +199,11 @@ export function createElectronSessions(): ElectronSessionFactory {
         });
       }
       sessions.set(jobId, isolated);
-      return { transport: createTransport(isolated, credentials), proxy: proxySnapshot(proxy) };
+      const maxResponseBytes = limits?.maxResponseBytes ?? DEFAULT_JOB_BUDGETS.maxResponseBytes;
+      return {
+        transport: createTransport(isolated, credentials, maxResponseBytes),
+        proxy: proxySnapshot(proxy),
+      };
     },
     async close(jobId: number): Promise<void> {
       const isolated = sessions.get(jobId);

@@ -36,7 +36,7 @@ Get-FileHash .\ArchiveRecon-0.1.0-win-x64.zip -Algorithm SHA256
 - **网络与代理**：直连 / 系统代理 / 固定代理（HTTP、HTTPS、SOCKS）。每个任务独立 Electron session 分区，`setProxy` 完成后才发起请求；HTTP 代理认证通过 Chromium 代理挑战按任务应答，凭据只存内存且不进入规则、快照、日志或错误文本；代理失败即失败，**不静默回退直连**。SOCKS 认证 Chromium 不支持，启动时明确拒绝并说明替代方案。
 - **来源端点约束**：Common Crawl 只接受官方 `https://index.commoncrawl.org` 或配置索引同源的 `cdx-api`，其他端点按非法元数据计入原因。
 - **查询预算（未扩大）**：Wayback ≤ 20 页 × 50 条；Common Crawl 每索引 ≤ 5 页、`pageSize=5`（索引块单位）。达到上限时明确标记为部分结果并给出原因。
-- **资源预算**：单响应 ≤ 8 MiB、单任务 ≤ 50,000 条去重记录、历史保留 ≤ 20 个终态任务；超限保留已接收数据，标记 `partial` 并给出 `record_limit`/`range_unknown` 等可见原因。
+- **资源预算**：单响应 ≤ 8 MiB、单任务 ≤ 50,000 条唯一记录、历史保留 ≤ 20 个终态任务。记录预算只按“尚未存在且本批未重复”的唯一 URL 填满剩余额度，重复不占额度、不谎报丢失；`received` 始终是原始接收数。页级响应超限保留前面结果，给出字节预算原因并落 `partial`；`collinfo` 非 JSON/非数组按 `range_unknown` 处理；重定向逐跳校验，只允许官方/配置同源端点。
 
 ## 从源码构建（开发者）
 

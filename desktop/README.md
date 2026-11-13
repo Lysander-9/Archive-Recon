@@ -113,8 +113,12 @@ node tests/integration/run-proxy-nonloopback.mjs
   归属；终态只发一次且递增 revision，随后发同 revision 的 `viewChanged`；停止保留已收记录；
   旧任务/跨来源事件不写入新集合；`closeAll` 幂等关闭每个任务 session 并停止后续调度。
 - 范围与预算：保留既有查询预算（Wayback ≤20×50、CC ≤5 页/pageSize=5）不扩大；
-  额外有限资源预算：单响应 ≤8 MiB、单任务 ≤50,000 条记录、历史保留 ≤20 个终态任务；
-  响应/记录超限记 `record_limit` 原因并落 `partial`，不静默丢弃。
+  额外有限资源预算：单响应 ≤8 MiB、单任务 ≤50,000 条唯一记录、历史保留 ≤20 个终态任务。
+  记录预算按唯一 URL（先排除已有与同批重复）填满剩余额度，重复不占额度且不谎报丢失；
+  `received` 保持原始接收数。页级响应超限保留前页结果并记字节预算原因，不笼统归为网络
+  错误；`collinfo` 非 JSON/非数组为类型化解析错误，按 `range_unknown`/`partial` 处理。
+  重定向逐跳校验，只允许官方或配置同源端点；流式 transport 与任务 `RequestOptions`
+  使用同一字节预算值。
 - 网络：每任务独立 Electron session 分区，`setProxy` 完成后才请求；代理失败即失败，
   不回退直连；请求有独立 deadline，取消中止在途请求。
 - 代理认证：固定代理 URL 中的 `user:pass@` 只用于内存中的每任务凭据，通过 Chromium
@@ -147,8 +151,10 @@ IPC 方法：`archive:startQuery`、`archive:cancelQuery`、`archive:getView`、
   未在真实 1366×768 物理显示器、100% 缩放下人工走查；macOS/Linux 未验证。
 - 逐行“敏感路径高亮”契约已提供：`RowView.interesting` 由 domain 规则计算；界面接线
   待前端补。
-- 原因摘要复制已提供受限 `copyReasons` 桥（jobId/source/revision，主进程写剪贴板），
-  主题已提供 `themeGet`/`themeChanged` 受限契约；界面接线待前端补；当前界面仍用
+- 原因摘要复制已提供受限 `copyReasons` 桥（jobId/source/revision，主进程写剪贴板）；
+  摘要包含冻结目标、来源、时间范围与读取上限，原因用“解析跳过（parse_line）”这类
+  用户文案并保留代码，脏 revision 返回 `STALE_VIEW`。主题已提供
+  `themeGet`/`themeChanged` 受限契约；界面接线待前端补；当前界面仍用
   `document.execCommand`，也不读取 nativeTheme 事件。
 - 域名筛选的下拉提示仅来自当前页出现的域名，不代表全量域名清单。
 - 打包未签名；未打 NSIS/MSI；未在无 Node 的干净 Windows 机器做人工验收（本地已用

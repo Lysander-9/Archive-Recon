@@ -687,6 +687,253 @@ test.describe("job manager (T1/T2/T3)", () => {
     expect(reason?.message).toContain("读取预算");
   });
 
+  test("record budget counts unique URLs only in a same batch", async () => {
+    const manager = new JobManager(
+      deps({
+        budgets: { maxTaskRecords: 2 },
+        wayback: {
+          queryPage: async () => ({
+            records: [
+              rawRecord("https://example.com/a"),
+              rawRecord("https://example.com/a"),
+              rawRecord("https://example.com/b"),
+              rawRecord("https://example.com/c"),
+            ],
+            hasMore: false,
+            parseSkipped: 0,
+            reasons: [],
+          }),
+        },
+      }),
+    );
+    const started = await manager.start({
+      target: "example.com",
+      source: "wayback",
+      range: { kind: "all" },
+      proxy: { mode: "direct" },
+    });
+    expect(started.ok).toBe(true);
+    if (!started.ok) return;
+    await until(() => viewOf(manager, started.value.jobId).terminal);
+
+    const view = viewOf(manager, started.value.jobId);
+    expect(view.unique).toBe(2);
+    expect(view.received).toBe(4);
+    const reason = view.reasons.find((item) => item.code === "record_limit");
+    expect(reason?.count).toBe(1);
+    expect(reason?.message).toContain("1 条新记录未保留");
+  });
+
+  test("record budget ignores cross-batch duplicates and exact-limit batches", async () => {
+    let page = 0;
+    const manager = new JobManager(
+      deps({
+        budgets: { maxTaskRecords: 2 },
+        wayback: {
+          queryPage: async () => {
+            page += 1;
+            if (page === 1) {
+              return {
+                records: [rawRecord("https://example.com/a")],
+                hasMore: true,
+                parseSkipped: 0,
+                reasons: [],
+              };
+            }
+            return {
+              records: [
+                rawRecord("https://example.com/a"),
+                rawRecord("https://example.com/b"),
+                rawRecord("https://example.com/c"),
+              ],
+              hasMore: false,
+              parseSkipped: 0,
+              reasons: [],
+            };
+          },
+        },
+      }),
+    );
+    const started = await manager.start({
+      target: "example.com",
+      source: "wayback",
+      range: { kind: "all" },
+      proxy: { mode: "direct" },
+    });
+    expect(started.ok).toBe(true);
+    if (!started.ok) return;
+    await until(() => viewOf(manager, started.value.jobId).terminal);
+
+    const view = viewOf(manager, started.value.jobId);
+    expect(view.unique).toBe(2);
+    expect(view.received).toBe(4);
+    const reason = view.reasons.find((item) => item.code === "record_limit");
+    expect(reason?.count).toBe(1);
+  });
+
+  test("record budget does not report a loss when only duplicates arrive", async () => {
+    let page = 0;
+    const manager = new JobManager(
+      deps({
+        budgets: { maxTaskRecords: 1 },
+        wayback: {
+          queryPage: async () => {
+            page += 1;
+            if (page === 1) {
+              return {
+                records: [rawRecord("https://example.com/a")],
+                hasMore: true,
+                parseSkipped: 0,
+                reasons: [],
+              };
+            }
+            return {
+              records: [
+                rawRecord("https://example.com/a"),
+                rawRecord("https://example.com/a"),
+              ],
+              hasMore: false,
+              parseSkipped: 0,
+              reasons: [],
+            };
+          },
+        },
+      }),
+    );
+    const started = await manager.start({
+      target: "example.com",
+      source: "wayback",
+      range: { kind: "all" },
+      proxy: { mode: "direct" },
+    });
+    expect(started.ok).toBe(true);
+    if (!started.ok) return;
+    await until(() => viewOf(manager, started.value.jobId).terminal);
+
+    const view = viewOf(manager, started.value.jobId);
+    expect(view.unique).toBe(1);
+    expect(view.received).toBe(3);
+    expect(view.reasons.some((item) => item.code === "record_limit")).toBe(false);
+    expect(view.status).toBe("completed");
+  });
+
+  test("page response budget keeps earlier data and reports a byte-budget reason", async () => {
+    let page = 0;
+    const manager = new JobManager(
+      deps({
+        budgets: { maxResponseBytes: 20_000 },
+        wayback: {
+          queryPage: async () => {
+            page += 1;
+            if (page === 1) {
+              return {
+                records: Array.from({ length: 50 }, (_, index) =>
+                  rawRecord(`https://example.com/page0/${index}`),
+                ),
+                hasMore: true,
+                parseSkipped: 0,
+                reasons: [],
+              };
+            }
+            throw new AppError("PARSE", "响应体超过 20000 字节上限，已中止读取", {
+              retryable: false,
+              context: { limit: 20_000 },
+            });
+          },
+        },
+      }),
+    );
+    const started = await manager.start({
+      target: "example.com",
+      source: "wayback",
+      range: { kind: "all" },
+      proxy: { mode: "direct" },
+    });
+    expect(started.ok).toBe(true);
+    if (!started.ok) return;
+    await until(() => viewOf(manager, started.value.jobId).terminal);
+
+    const view = viewOf(manager, started.value.jobId);
+    expect(view.unique).toBe(50);
+    expect(view.status).toBe("partial");
+    const reason = view.reasons.find((item) => item.page === 1);
+    expect(reason?.code).toBe("record_limit");
+    expect(reason?.message).toContain("读取预算");
+    expect(view.reasons.some((item) => item.code === "network")).toBe(false);
+  });
+
+  test("metadata that is not an array becomes a typed range_unknown partial", async () => {
+    const manager = new JobManager(
+      deps({
+        commoncrawl: {
+          fetchIndexes: async () => {
+            throw new AppError("PARSE", "collinfo.json 不是索引数组，无法确定索引范围");
+          },
+          pageCount: async () => 0,
+          queryPage: async () => ({ records: [], hasMore: false, parseSkipped: 0, reasons: [] }),
+        },
+      }),
+    );
+    const started = await manager.start({
+      target: "example.com",
+      source: "commoncrawl",
+      range: { kind: "recent", months: 3 },
+      proxy: { mode: "direct" },
+    });
+    expect(started.ok).toBe(true);
+    if (!started.ok) return;
+    await until(() => viewOf(manager, started.value.jobId, "commoncrawl").terminal);
+    const view = viewOf(manager, started.value.jobId, "commoncrawl");
+    expect(view.status).toBe("partial");
+    expect(view.reasons.some((item) => item.code === "range_unknown")).toBe(true);
+  });
+
+  test("old terminal jobs are pruned and their views become STALE_VIEW", async () => {
+    const manager = new JobManager(
+      deps({
+        budgets: { maxRetainedJobs: 1 },
+        wayback: {
+          queryPage: async () => ({
+            records: [rawRecord("https://example.com/a")],
+            hasMore: false,
+            parseSkipped: 0,
+            reasons: [],
+          }),
+        },
+      }),
+    );
+    const first = await manager.start({
+      target: "example.com",
+      source: "wayback",
+      range: { kind: "all" },
+      proxy: { mode: "direct" },
+    });
+    expect(first.ok).toBe(true);
+    if (!first.ok) return;
+    await until(() => viewOf(manager, first.value.jobId).terminal);
+
+    const second = await manager.start({
+      target: "other.example",
+      source: "wayback",
+      range: { kind: "all" },
+      proxy: { mode: "direct" },
+    });
+    expect(second.ok).toBe(true);
+    if (!second.ok) return;
+    await until(() => viewOf(manager, second.value.jobId).terminal);
+
+    const stale = manager.getView({
+      jobId: first.value.jobId,
+      source: "wayback",
+      filter: { ...EMPTY_FILTER },
+      sort: { key: null, reverse: false },
+      pageIndex: 0,
+      pageSize: 50,
+    });
+    expect(stale.ok).toBe(false);
+    if (!stale.ok) expect(stale.error.code).toBe("STALE_VIEW");
+  });
+
   test("reason summary copy is revision-checked and restricted to the job", () => {
     const environment = deps();
     const manager = new JobManager(environment);
@@ -695,6 +942,10 @@ test.describe("job manager (T1/T2/T3)", () => {
       id: 1,
       source: "wayback",
       collection: { revision: 3 },
+      config: {
+        target: { label: "example.com" },
+        selection: { window: { label: "全部时间" } },
+      },
       reasons: [
         { code: "parse_line", message: "1 行被跳过", source: "wayback", count: 1, page: 0 },
       ],
@@ -709,6 +960,9 @@ test.describe("job manager (T1/T2/T3)", () => {
     if (copied.ok) {
       expect(copied.value.outcome.reasonCount).toBe(1);
       expect(copied.value.text).toContain("parse_line");
+      expect(copied.value.text).toContain("目标");
+      expect(copied.value.text).toContain("来源 Wayback Machine");
+      expect(copied.value.text).toContain("读取上限");
     }
 
     const wrongSource = manager.copyReasons({ jobId: 1, source: "commoncrawl", revision: 3 });

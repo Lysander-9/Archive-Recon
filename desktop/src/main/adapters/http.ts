@@ -9,6 +9,9 @@ export interface TextResponse {
   text: string;
 }
 
+const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
+const MAX_REDIRECTS = 5;
+
 function abortError(): AppError {
   return new AppError("CLOSED", "请求已取消");
 }
@@ -29,20 +32,45 @@ export async function fetchText(
   }, Math.max(1, options.timeoutMs));
 
   try {
-    const response = await transport(url, { signal: controller.signal });
-    const text = await response.text();
-    const limit = options.maxResponseBytes ?? DEFAULT_JOB_BUDGETS.maxResponseBytes;
-    const bytes = Buffer.byteLength(text, "utf8");
-    if (bytes > limit) {
-      throw new AppError("PARSE", `响应体超过 ${limit} 字节上限，已中止读取`, {
-        retryable: false,
-        context: { bytes, limit },
+    let currentUrl = url;
+    for (let hop = 0; hop <= MAX_REDIRECTS; hop += 1) {
+      const response = await transport(currentUrl, {
+        signal: controller.signal,
+        onRedirect: options.validateRedirect,
       });
+      if (REDIRECT_STATUSES.has(response.status)) {
+        const location = response.location;
+        if (!location) {
+          throw new AppError("NETWORK", "重定向响应缺少目标地址，已停止读取");
+        }
+        let next: string;
+        try {
+          next = new URL(location, currentUrl).toString();
+        } catch {
+          throw new AppError("NETWORK", "重定向目标无法解析，已停止读取");
+        }
+        if (options.validateRedirect && !options.validateRedirect(next)) {
+          throw new AppError("NETWORK", "重定向目标不在允许的官方端点内，已停止读取");
+        }
+        currentUrl = next;
+        continue;
+      }
+
+      const text = await response.text();
+      const limit = options.maxResponseBytes ?? DEFAULT_JOB_BUDGETS.maxResponseBytes;
+      const bytes = Buffer.byteLength(text, "utf8");
+      if (bytes > limit) {
+        throw new AppError("PARSE", `响应体超过 ${limit} 字节上限，已中止读取`, {
+          retryable: false,
+          context: { bytes, limit },
+        });
+      }
+      if (response.status >= 400) {
+        throw new AppError("NETWORK", `HTTP ${response.status}`, { retryable: response.status >= 500 });
+      }
+      return { status: response.status, text };
     }
-    if (response.status >= 400) {
-      throw new AppError("NETWORK", `HTTP ${response.status}`, { retryable: response.status >= 500 });
-    }
-    return { status: response.status, text };
+    throw new AppError("NETWORK", "重定向次数过多，已停止读取");
   } catch (error) {
     if (options.signal.aborted) throw abortError();
     if (timedOut) {

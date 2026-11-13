@@ -50,7 +50,31 @@ interface JobRuntime {
   lastError?: AppError;
 }
 
+const REASON_LABELS: Record<string, string> = {
+  parse_line: "解析跳过（parse_line）",
+  parse_record: "响应格式异常（parse_record）",
+  network: "网络或读取失败（network）",
+  page_limit: "达到页数上限（page_limit）",
+  record_limit: "达到资源预算（record_limit）",
+  stopped: "任务已停止（stopped）",
+  range_unknown: "时间范围未知（range_unknown）",
+  unknown: "未知原因（unknown）",
+};
+
 const BUSY_MESSAGE = "当前已有查询任务在运行，请等待完成或先停止。";
+
+function responseBudgetLimit(error: unknown): number | null {
+  if (!(error instanceof AppError) || error.code !== "PARSE") return null;
+  const limit = (error.context as Record<string, unknown> | undefined)?.limit;
+  return typeof limit === "number" ? limit : null;
+}
+
+function formatByteBudget(limit: number): string {
+  if (limit >= 1024 * 1024) {
+    return `${Math.round((limit / (1024 * 1024)) * 10) / 10} MiB`;
+  }
+  return `${limit} 字节`;
+}
 
 function budgetLabel(source: SourceId): string {
   if (source === "wayback") {
@@ -107,7 +131,9 @@ export class JobManager {
 
       let session: JobSession;
       try {
-        session = await this.deps.sessions.create(jobId, request.proxy);
+        session = await this.deps.sessions.create(jobId, request.proxy, {
+          maxResponseBytes: this.budgets.maxResponseBytes,
+        });
       } catch (error) {
         const failure = error instanceof AppError ? error : errorFromUnknown(error, request.source);
         return { ok: false, error: failure.toDto() };
@@ -245,12 +271,24 @@ export class JobManager {
         .filter(Boolean)
         .join(" ");
       const count = reason.count ? ` ×${reason.count}` : "";
-      return `${reason.code}${where ? ` ${where}` : ""}${count}：${reason.message}`;
+      const label = REASON_LABELS[reason.code] ?? reason.code;
+      return `${label}${where ? ` ${where}` : ""}${count}：${reason.message}`;
     });
+    const sourceLabel = job.source === "wayback" ? "Wayback Machine" : "Common Crawl";
+    const rangeLabel = job.config.selection.window
+      ? job.config.selection.window.label
+      : "全部时间";
+    const header = [
+      `未完成原因（目标 ${job.config.target.label}`,
+      `来源 ${sourceLabel}`,
+      `时间范围 ${rangeLabel}`,
+      `读取上限 ${budgetLabel(job.source)}）`,
+    ].join(" · ");
+    const text = lines.length > 0 ? `${header}\n${lines.join("\n")}` : header;
     return {
       ok: true,
       value: {
-        text: lines.join("\r\n"),
+        text,
         outcome: { copiedCount: lines.length, reasonCount: job.reasons.length },
       },
     };
@@ -359,6 +397,18 @@ export class JobManager {
         result = await this.deps.wayback.queryPage(host, page, pageSize, options);
       } catch (error) {
         if (options.signal.aborted) return;
+        const budget = responseBudgetLimit(error);
+        if (budget !== null) {
+          this.addReason(job, {
+            code: "record_limit",
+            message: `第 ${page + 1} 页响应超过 ${formatByteBudget(budget)} 读取预算，已保留前面结果`,
+            source: "wayback",
+            page,
+            retryable: false,
+          });
+          job.completion = "partial";
+          return;
+        }
         if (job.received === 0) throw error;
         const reason: ReasonDto = {
           code: "network",
@@ -468,7 +518,19 @@ export class JobManager {
     try {
       totalPages = await this.deps.commoncrawl.pageCount(index, host, options);
     } catch (error) {
-      if (options.signal.aborted) return false;
+      if (options.signal.aborted) return true;
+      const budget = responseBudgetLimit(error);
+      if (budget !== null) {
+        this.addReason(job, {
+          code: "record_limit",
+          message: `索引 ${index.id} 页数响应超过 ${formatByteBudget(budget)} 读取预算`,
+          source: "commoncrawl",
+          indexId: index.id,
+          retryable: false,
+        });
+        job.completion = "partial";
+        return true;
+      }
       this.addReason(job, {
         code: "network",
         message: `索引 ${index.id} 页数查询失败`,
@@ -490,6 +552,19 @@ export class JobManager {
         result = await this.deps.commoncrawl.queryPage(index, host, page, CC_BUDGET.pageSize, options);
       } catch (error) {
         if (options.signal.aborted) return false;
+        const budget = responseBudgetLimit(error);
+        if (budget !== null) {
+          this.addReason(job, {
+            code: "record_limit",
+            message: `索引 ${index.id} 第 ${page + 1} 页响应超过 ${formatByteBudget(budget)} 读取预算，已保留前面结果`,
+            source: "commoncrawl",
+            indexId: index.id,
+            page,
+            retryable: false,
+          });
+          job.completion = "partial";
+          return true;
+        }
         this.addReason(job, {
           code: "network",
           message: `索引 ${index.id} 第 ${page + 1} 页读取失败`,
@@ -531,21 +606,34 @@ export class JobManager {
     job: JobRuntime,
     records: Array<Omit<ArchiveRecord, "rowId">>,
   ): { added: number; truncated: number } {
+    // Budget is filled with unique URLs only: duplicates already in the
+    // collection or repeated inside this batch never consume quota and are not
+    // reported as lost records. received always reflects the raw batch size.
     const remaining = Math.max(0, this.budgets.maxTaskRecords - job.collection.total);
-    const accepted = records.length > remaining ? records.slice(0, remaining) : records;
-    const truncated = records.length - accepted.length;
+    const accepted: Array<Omit<ArchiveRecord, "rowId">> = [];
+    const seenInBatch = new Set<string>();
+    let droppedUnique = 0;
+    job.received += records.length;
+    for (const record of records) {
+      const key = record.url;
+      if (key) {
+        if (seenInBatch.has(key) || job.collection.hasUrl(key)) continue;
+        seenInBatch.add(key);
+      }
+      if (accepted.length < remaining) accepted.push(record);
+      else droppedUnique += 1;
+    }
     const outcome = job.collection.append(accepted);
-    job.received += accepted.length;
-    if (truncated > 0) {
+    if (droppedUnique > 0) {
       this.addReason(job, {
         code: "record_limit",
-        message: `已达到 ${this.budgets.maxTaskRecords} 条记录预算，本次丢弃 ${truncated} 条`,
+        message: `已达到 ${this.budgets.maxTaskRecords} 条记录预算，${droppedUnique} 条新记录未保留`,
         source: job.source,
-        count: truncated,
+        count: droppedUnique,
       });
       job.completion = "partial";
     }
-    return { added: outcome.added, truncated };
+    return { added: outcome.added, truncated: droppedUnique };
   }
 
   private wait(ms: number, signal: AbortSignal): Promise<void> {

@@ -156,6 +156,61 @@ test.describe("Common Crawl adapter", () => {
     expect(metas).toHaveLength(0);
     expect(invalidCount).toBe(3);
   });
+
+  test("collinfo malformed JSON or non-array becomes a typed parse error", async () => {
+    const invalidJson = fakeTransport([textResponse("not-json")]);
+    const nonArray = fakeTransport([jsonResponse({ error: "not an array" })]);
+    const adapter = new CommonCrawlAdapter({ indexBaseUrl: "https://index.commoncrawl.org" });
+
+    await expect(adapter.fetchIndexes(options(invalidJson.transport))).rejects.toMatchObject({
+      code: "PARSE",
+    });
+    await expect(adapter.fetchIndexes(options(nonArray.transport))).rejects.toMatchObject({
+      code: "PARSE",
+    });
+  });
+
+  test("rejects redirects that leave the official index endpoints", async () => {
+    const redirect = {
+      status: 302,
+      location: "https://evil.example/collinfo.json",
+      text: async () => "",
+      json: async () => ({}),
+    };
+    const { transport, urls } = fakeTransport([redirect]);
+    const adapter = new CommonCrawlAdapter({ indexBaseUrl: "https://index.commoncrawl.org" });
+
+    await expect(adapter.fetchIndexes(options(transport))).rejects.toMatchObject({
+      message: expect.stringContaining("重定向"),
+    });
+    expect(urls).toHaveLength(1);
+  });
+
+  test("follows redirects that stay on the official endpoint", async () => {
+    const redirect = {
+      status: 302,
+      location: "/collinfo.json?redirected=1",
+      text: async () => "",
+      json: async () => ({}),
+    };
+    const { transport, urls } = fakeTransport([
+      redirect,
+      jsonResponse([
+        {
+          id: "CC-MAIN-OK",
+          "cdx-api": "https://index.commoncrawl.org/CC-MAIN-OK-index",
+          from: "20240101000000",
+          to: "20240201000000",
+        },
+      ]),
+    ]);
+    const adapter = new CommonCrawlAdapter({ indexBaseUrl: "https://index.commoncrawl.org" });
+
+    const { metas } = await adapter.fetchIndexes(options(transport));
+
+    expect(metas.map((item) => item.id)).toEqual(["CC-MAIN-OK"]);
+    expect(urls).toHaveLength(2);
+  });
 });
 
 test.describe("proxy isolation", () => {
