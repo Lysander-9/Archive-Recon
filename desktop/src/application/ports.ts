@@ -63,6 +63,8 @@ export interface WaybackPort {
 export interface JobSession {
   transport: Transport;
   proxy: ProxySnapshot;
+  /** Effective proxy resolution for this task session (not the default session). */
+  resolveProxy?: (url: string) => Promise<string>;
 }
 
 export interface SessionFactory {
@@ -78,7 +80,7 @@ export interface JobDeps {
   sessions: SessionFactory;
   emit: (event: import("../contracts/types").JobEventDto) => void;
   /** Optional diagnostic hint when a task network failure may be proxy-related. */
-  proxyAdvice?: (mode: string) => Promise<string | null>;
+  proxyAdvice?: (mode: string, resolved: string | null) => Promise<string | null>;
   budgets?: Partial<import("./budgets").JobBudgets>;
   source?: SourceId;
 }

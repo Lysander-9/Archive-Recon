@@ -1,0 +1,28 @@
+{
+  "sha": "5a548b37a80ad11f9f6541643a805040f112dd9d",
+  "previous": "3bcabe4",
+  "capturedAt": "2026-11-13",
+  "incrementFiles": [
+    "desktop/src/renderer/renderer.js",
+    "desktop/tests/e2e/first-start-failure.spec.ts"
+  ],
+  "contractOrBackendChanges": false,
+  "acceptanceAssertionsChanged": false,
+  "results": {
+    "typecheck": "pass",
+    "build": "pass",
+    "unit": "72 passed",
+    "e2e": "31 passed (first-start-failure 2, ui-workspace 22)",
+    "independentAcceptance": "103 tests, 102 pass, 0 fail, 1 skip",
+    "independentUiProbe": "8/8 pass",
+    "firstFailureProbe": "pass"
+  },
+  "firstFailureProbe": [
+    "invalid first start -> idle, error kept, no preparing empty state, 0 job events, retry success",
+    "existing task failure -> previous completed result and rows retained",
+    "proxy creation failure -> PROXY notice, idle, 0 job events, retry success"
+  ],
+  "skipped": ["clean Windows ZIP without Node/Python"],
+  "sourceDeliverable": true,
+  "distributionAccepted": false
+}

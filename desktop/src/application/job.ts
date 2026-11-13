@@ -614,11 +614,19 @@ export class JobManager {
     const context = failure.context as Record<string, unknown> | undefined;
     const kind = String(context?.kind ?? "");
     if (
-      ["proxy", "network", "timeout", "dns", "tls"].includes(kind) &&
+      ["proxy", "proxy-auth", "network", "timeout", "dns", "tls"].includes(kind) &&
       this.deps.proxyAdvice
     ) {
+      let resolved: string | null = null;
       try {
-        const advice = await this.deps.proxyAdvice(job.config.proxy.mode);
+        resolved = job.session.resolveProxy
+          ? await job.session.resolveProxy("https://index.commoncrawl.org")
+          : null;
+      } catch {
+        resolved = null;
+      }
+      try {
+        const advice = await this.deps.proxyAdvice(job.config.proxy.mode, resolved);
         if (advice) text = `${text}；${advice}`;
       } catch {
         // advice is diagnostic only

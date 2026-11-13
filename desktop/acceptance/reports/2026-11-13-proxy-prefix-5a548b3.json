@@ -1,0 +1,44 @@
+{
+  "sha": "5a548b37a80ad11f9f6541643a805040f112dd9d",
+  "phase": "pre-fix",
+  "capturedAt": "2026-11-13",
+  "acceptance": {
+    "tests": 108,
+    "pass": 102,
+    "fail": 5,
+    "skipped": 1,
+    "failureGroup": "R9 error summary hides HTTP status/proxy/TLS/timeout causes"
+  },
+  "httpsProxy": {
+    "connect": "pass",
+    "connectAuth": "pass authorized=1",
+    "httpsTlsProxy": "pass",
+    "socks5": "pass",
+    "proxyRefusedNoDirect": "pass",
+    "tlsUntrusted": "diagnosable (ERR_CERT_AUTHORITY_INVALID)",
+    "status429": "message has 429, code still NETWORK",
+    "status503": "message has 503, code still NETWORK",
+    "timeout": "pass (TIMEOUT)",
+    "gzip": "pass",
+    "byteBudget": "pass",
+    "cancel": "pass",
+    "proxyAuthFailure": "FAIL: ERR_TOO_MANY_RETRIES, no 407/auth stage",
+    "dnsFailure": "FAIL: ERR_EMPTY_RESPONSE, no DNS classification",
+    "systemProxyEnv": "GAP: OS system mode refers to OS proxy; env not applicable; current OS proxy direct",
+    "explicitDirectEnv": "PASS contract: explicit direct ignores HTTPS_PROXY",
+    "environmentProposal": "UNRESOLVED contract: proposal/manual application not defined"
+  },
+  "officialHealth": {
+    "curlDirect": "HTTP 200, 35501 bytes, 3.75s",
+    "productViaControlledProxy": "HTTP 200, 35501 bytes",
+    "curlViaTestProxy": "timeout (harness comparison unresolved)"
+  },
+  "blocked": true,
+  "blocker": "user proxy configuration not provided; exact CC failure not reproduced; pre-fix diagnostics/config gaps reproducible",
+  "testOnlyConditions": [
+    "<-loopback> proxy bypass for loopback targets",
+    "trusted test certificate via setCertificateVerifyProc"
+  ],
+  "curlComparison": "unresolved: curl via test proxy timed out; product succeeded; not signed off",
+  "configMatrix": "desktop/acceptance/proxy/CONFIG_MATRIX.md"
+}

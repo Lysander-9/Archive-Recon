@@ -964,12 +964,27 @@ test.describe("job manager (T1/T2/T3)", () => {
     expect(reason?.message).toContain("页数查询失败");
     expect(reason?.context?.httpStatus).toBe(504);
     expect(reason?.context?.stage).toBe("cc-page-count");
+    // Every selected index failed and no usable rows exist: the task is failed,
+    // not partial (partial requires at least one successful index).
+    expect(view.status).toBe("failed");
   });
 
   test("direct network failure adds the available system proxy advice", async () => {
+    let seenResolved: string | null | undefined;
     const manager = new JobManager(
       deps({
-        proxyAdvice: async () => "系统代理可用（127.0.0.1:7890），本次任务使用直连",
+        proxyAdvice: async (_mode, resolved) => {
+          seenResolved = resolved;
+          return "系统代理可用（127.0.0.1:7890），本次任务使用直连";
+        },
+        sessions: {
+          create: async () => ({
+            transport: async () => ({ status: 200, text: async () => "[]", json: async () => [] }),
+            proxy: proxySnapshot({ mode: "direct" }),
+            resolveProxy: async () => "PROXY 127.0.0.1:7890",
+          }),
+          close: async () => undefined,
+        },
         wayback: {
           queryPage: async () => {
             throw new AppError("NETWORK", "代理连接失败（net::ERR_TUNNEL_CONNECTION_FAILED）", {
@@ -995,6 +1010,7 @@ test.describe("job manager (T1/T2/T3)", () => {
     expect(reason?.message).toContain("代理连接失败");
     expect(reason?.message).toContain("系统代理可用");
     expect(reason?.context?.kind).toBe("proxy");
+    expect(seenResolved).toBe("PROXY 127.0.0.1:7890");
   });
 
   test("reason summary copy is revision-checked and restricted to the job", () => {

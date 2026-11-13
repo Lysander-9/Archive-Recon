@@ -72,7 +72,7 @@ function classifyTransportError(message: string): { kind: string; text: string; 
       retryable: false,
     };
   }
-  if (/TIMED_OUT|TIMEOUT|ERR_TIMED/i.test(message)) {
+  if (/TIMED_OUT|TIMEOUT|ERR_TIMED|timed out|ETIMEDOUT/i.test(message)) {
     return {
       kind: "timeout",
       text: `请求超时（${message}）：代理或上游响应过慢`,
@@ -125,6 +125,7 @@ export async function fetchText(
               context: { stage: "transport", attempts, kind: "timeout", timeoutMs: options.timeoutMs },
             });
           }
+          if (error instanceof AppError) throw error;
           const message = error instanceof Error ? error.message : String(error);
           const classified = classifyTransportError(message);
           if (classified.retryable && attempt < MAX_ATTEMPTS - 1) {

@@ -1,0 +1,72 @@
+{
+  "sha": "a1ca968ab15251968a14eaf7897d1c45bd220670",
+  "base": "5a548b3",
+  "sourceLocatedAt": "local worktree nept-3-c5d8bc2f4e21 / fix/cc-proxy (HEAD verified)",
+  "acceptanceSet": "original 108 + R10 supplement 8",
+  "tests": 116,
+  "pass": 112,
+  "fail": 3,
+  "skipped": 1,
+  "failures": [
+    {
+      "id": "R9-429-status",
+      "actual": "failed",
+      "expectedByOriginalAssertion": "partial",
+      "note": "single-index all-fail; reason contains HTTP 429, context.httpStatus=429, attempts=3"
+    },
+    {
+      "id": "R9-503-status",
+      "actual": "failed",
+      "expectedByOriginalAssertion": "partial",
+      "note": "same status semantics conflict; cause visible"
+    },
+    {
+      "id": "R9-timeout-string",
+      "actual": "generic network",
+      "expectedByOriginalAssertion": "timeout text",
+      "note": "input was non-Chromium string; real ERR_TIMED_OUT passes R10"
+    }
+  ],
+  "r10Passed": [
+    "429/502/503/504 partial with companion index and httpStatus context",
+    "attempts <=3",
+    "real ERR_TIMED_OUT classification",
+    "real ERR_NAME_NOT_RESOLVED classification",
+    "all indexes failing -> failed with 504"
+  ],
+  "httpsProxy": {
+    "connect": "pass",
+    "connectAuth": "pass authorized=1",
+    "httpsTlsProxy": "pass",
+    "socks5": "pass",
+    "ccPageFlow": "pass metas=1 pages=1 records=2",
+    "proxyRefusedNoDirect": "pass",
+    "tls": "pass",
+    "status429_502_503_504": "pass, attempts=3",
+    "timeout": "pass",
+    "retryCancel": "pass",
+    "gzip": "pass",
+    "byteBudget": "pass",
+    "cancel": "pass",
+    "explicitDirectEnv": "pass contract",
+    "osSystemProxy": "gap (no OS proxy)",
+    "invalidProxyAuth": "FAIL: ERR_TOO_MANY_RETRIES, no 407/auth",
+    "officialHealth": "unresolved: product ERR_EMPTY_RESPONSE via test proxy; curl timeout via test proxy; direct curl earlier 200/35501"
+  },
+  "build": {
+    "typecheck": "pass",
+    "build": "pass",
+    "unit": "79 passed",
+    "e2e": "31 passed",
+    "independentUi": "8/8 pass"
+  },
+  "publicDeliverable": false,
+  "blockers": [
+    "invalid proxy auth diagnostic remains generic",
+    "original R9 3 assertions still fail (2 status semantics, 1 synthetic timeout)",
+    "OS system proxy unavailable",
+    "official proxy comparison unresolved",
+    "clean Windows ZIP skip",
+    "no package built/verified for this SHA"
+  ]
+}

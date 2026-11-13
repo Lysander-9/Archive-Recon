@@ -60,17 +60,11 @@ function sanitizeProxyEndpoint(value: string): string {
  * explain how to make the configuration effective. Never changes the task proxy
  * silently and never prints credentials or the full environment.
  */
-async function proxyAdvice(mode: string): Promise<string | null> {
-  const systemProxy = await (async (): Promise<string | null> => {
-    try {
-      const resolved = await electronSession.defaultSession.resolveProxy(
-        "https://index.commoncrawl.org",
-      );
-      const match = /^PROXY\s+([^\s;]+)/i.exec(resolved);
-      return match ? sanitizeProxyEndpoint(match[1]) : null;
-    } catch {
-      return null;
-    }
+async function proxyAdvice(mode: string, resolved: string | null): Promise<string | null> {
+  const systemProxy = (() => {
+    if (!resolved) return null;
+    const match = /^PROXY\s+([^\s;]+)/i.exec(resolved);
+    return match ? sanitizeProxyEndpoint(match[1]) : null;
   })();
   if (mode === "system" || mode === "fixed") {
     const label = mode === "system" ? "系统代理" : "固定代理";

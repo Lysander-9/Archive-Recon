@@ -67,8 +67,8 @@ nativeTheme 切换（不从 emulateMedia 冒充）、真实剪贴板读回、前
 
 验证记录（2026-11-13，Windows 11 / Node 26.13.0，完整候选 SHA）：`typecheck`、`build` 通过；
 单元 **79 passed**；Electron E2E **31 passed**（`desktop.spec` 4 + `theme-contract` 2 +
-`ui-workspace` 22 + 真实剪贴板原因摘要 1 + 首次失败 2）；独立 acceptance（`75afc8f` + `ccffa32`）
-**97 tests / 96 pass / 0 fail / 1 skip**；打包 `dist:win` + `verify:packaged`
+`ui-workspace` 22 + 真实剪贴板原因摘要 1 + 首次失败 2）；独立 acceptance（`75afc8f` + `ccffa32` + 代理补丁）
+**116 tests / 113 pass / 2 fail / 1 skip**（2 项为 R9 旧终态断言，等待测试侧修正）；打包 `dist:win` + `verify:packaged`
 **PACKAGED_VERIFY_OK**，独立 packaged/double-click 验收通过。
 
 ## 可复现入口
@@ -133,8 +133,10 @@ node tests/integration/run-proxy-nonloopback.mjs
   （`resolveProxy` 可核对），环境变量代理只作为提示，不静默改变任务代理。
 - 错误诊断：区分代理连接失败、407/认证、TLS、DNS、429/5xx、超时与响应预算，记录阶段、
   HTTP 状态、Chromium 错误与尝试次数；429/502/503/504 有界重试（3 次上限，0.75/2s 退避），
-  不无限重试、不失败直连、不关闭 TLS 校验。Common Crawl 上游 5xx 会显示具体 HTTP 状态，
-  不再显示为“没有存档”；直连失败时若检测到系统/环境代理，原因中给出可操作提示。
+  不无限重试、不失败直连、不关闭 TLS 校验。代理认证仅在实际匹配代理的 407/login 挑战并
+  重复失败时判为认证失败，不把通用 `ERR_TOO_MANY_RETRIES` 猜成密码错误且不做瞬时重试。
+  Common Crawl 上游 5xx 会显示具体 HTTP 状态，不再显示为“没有存档”；直连失败时若检测到
+  任务 session 的系统/环境代理，原因中给出可操作提示。
 - 代理认证：固定代理 URL 中的 `user:pass@` 只用于内存中的每任务凭据，通过 Chromium
   代理挑战（`ClientRequest` 的 `login` 事件）按需应答，且只应答匹配该代理 host:port
   的挑战；代理规则、`ProxySnapshot`、错误文本与日志都不含凭据。SOCKS 认证 Chromium

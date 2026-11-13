@@ -361,4 +361,31 @@ test.describe("HTTP failure classification and bounded retry", () => {
     expect(response.text).toBe("ok");
     expect(urls).toHaveLength(2);
   });
+
+  test("trusted timed-out text and typed auth errors are classified without retry", async () => {
+    const timedOut = fakeTransport([new Error("Request timed out after 30000ms")]);
+    await expect(
+      fetchText(timedOut.transport, "https://index.commoncrawl.org/x", {
+        transport: timedOut.transport,
+        signal: new AbortController().signal,
+        timeoutMs: 2000,
+        retryDelaysMs: [1, 1],
+      }),
+    ).rejects.toMatchObject({ message: expect.stringContaining("超时") });
+
+    const authError = new AppError("PROXY", "代理认证失败（HTTP 407）：用户名或密码错误", {
+      retryable: false,
+      context: { stage: "proxy-auth", kind: "proxy-auth", httpStatus: 407 },
+    });
+    const authTransport = fakeTransport([authError]);
+    await expect(
+      fetchText(authTransport.transport, "https://index.commoncrawl.org/x", {
+        transport: authTransport.transport,
+        signal: new AbortController().signal,
+        timeoutMs: 2000,
+        retryDelaysMs: [1, 1],
+      }),
+    ).rejects.toBe(authError);
+    expect(authTransport.urls).toHaveLength(1);
+  });
 });
