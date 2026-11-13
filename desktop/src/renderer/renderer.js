@@ -47,6 +47,13 @@
     xlarge: "font-xlarge",
   };
 
+  const SOURCE_LABEL = {
+    wayback: "Wayback Machine",
+    commoncrawl: "Common Crawl",
+  };
+
+  const CONFIG_HINT_IDLE = "代理与范围在开始查询时冻结，修改只影响下一次查询";
+
   const EMPTY_FILTER = {
     status: "",
     fileType: "",
@@ -59,6 +66,9 @@
     jobId: null,
     source: "wayback",
     lastJobTarget: "",
+    frozen: null,
+    starting: false,
+    viewGeneration: 0,
     revision: 0,
     pageIndex: 0,
     pageSize: 50,
@@ -81,9 +91,7 @@
   };
 
   let refreshTimer = null;
-  let refreshPending = false;
   let noticeTimer = null;
-  let refreshing = false;
 
   /* ------------------------------------------------------------------ */
   /* 基础工具                                                             */
@@ -125,21 +133,14 @@
     return parts.join(" · ");
   }
 
-  function copyText(text) {
-    const area = document.createElement("textarea");
-    area.value = text;
-    area.setAttribute("readonly", "");
-    area.className = "hidden";
-    document.body.appendChild(area);
-    area.select();
-    let ok = false;
-    try {
-      ok = document.execCommand("copy");
-    } catch {
-      ok = false;
-    }
-    area.remove();
-    return ok;
+  function selectElementContents(node) {
+    const range = document.createRange();
+    range.selectNodeContents(node);
+    const selection = window.getSelection();
+    if (!selection) return false;
+    selection.removeAllRanges();
+    selection.addRange(range);
+    return true;
   }
 
   /* ------------------------------------------------------------------ */
@@ -152,9 +153,9 @@
     const chip = $("status-chip");
     chip.textContent = STATUS_LABEL[status] || status;
     chip.className = `chip ${status}`;
-    const busy = ACTIVE.has(status);
+    const busy = ACTIVE.has(status) || state.starting;
     $("start-button").disabled = busy;
-    $("cancel-button").disabled = !["preparing", "running", "stopping"].includes(status);
+    $("cancel-button").disabled = state.starting || !["preparing", "running", "stopping"].includes(status);
     $("start-button").textContent = status === "idle" ? "开始查询" : "开始新查询";
   }
 
@@ -206,9 +207,11 @@
       $("budget-label").textContent = "";
       return;
     }
+    const sourceLabel = view.source ? SOURCE_LABEL[view.source] || view.source : "";
     const parts = [`目标 ${scope.label}`];
+    if (sourceLabel) parts.push(`来源 ${sourceLabel}`);
     // 范围语义来自冻结的任务快照（contracts.TargetScope.match），不是界面承诺
-    parts.push(scope.match === "host-and-subdomains" ? "主机及子域" : scope.match);
+    parts.push(scope.match === "host-and-subdomains" ? "主机及子域" : String(scope.match));
     parts.push(`范围 ${scope.rangeLabel}`);
     parts.push(`代理 ${scope.proxyDisplay}`);
     $("scope-label").textContent = parts.join(" · ");
@@ -236,11 +239,25 @@
     $("next-page").disabled = pageCount === 0 || state.pageIndex >= pageCount - 1;
   }
 
-  function updateDirtyHint() {
-    const node = $("dirty-hint");
-    const value = $("target-input").value.trim();
-    const dirty = state.jobId !== null && value !== "" && value !== state.lastJobTarget;
-    node.classList.toggle("hidden", !dirty);
+  function updateConfigHint() {
+    const node = $("config-hint");
+    if (!state.frozen) {
+      node.textContent = CONFIG_HINT_IDLE;
+      node.classList.remove("dirty");
+      return;
+    }
+    const changed = [];
+    if ($("target-input").value.trim() !== state.frozen.target) changed.push("目标");
+    if ($("source-select").value !== state.frozen.source) changed.push("来源");
+    if (rangeKey(readRangeSelection()) !== state.frozen.rangeKey) changed.push("时间范围");
+    if (proxyKey(readProxySelection()) !== state.frozen.proxyKey) changed.push("代理");
+    if (changed.length === 0) {
+      node.textContent = CONFIG_HINT_IDLE;
+      node.classList.remove("dirty");
+      return;
+    }
+    node.textContent = `本次查询仍使用已冻结配置；${changed.join("、")} 的修改将在下次查询生效`;
+    node.classList.add("dirty");
   }
 
   /* ------------------------------------------------------------------ */
@@ -252,19 +269,24 @@
     const title = $("empty-title");
     const detail = $("empty-detail");
     const action = $("empty-action");
+    const secondary = $("empty-action-2");
 
-    const show = (text, sub, actionLabel, handler) => {
+    const show = (text, sub, actions) => {
       box.classList.remove("hidden");
       title.textContent = text;
       detail.textContent = sub || "";
-      if (actionLabel && handler) {
-        action.classList.remove("hidden");
-        action.textContent = actionLabel;
-        action.onclick = handler;
-      } else {
-        action.classList.add("hidden");
-        action.onclick = null;
-      }
+      const slots = [action, secondary];
+      slots.forEach((node, index) => {
+        const entry = actions && actions[index];
+        if (entry) {
+          node.classList.remove("hidden");
+          node.textContent = entry.label;
+          node.onclick = entry.handler;
+        } else {
+          node.classList.add("hidden");
+          node.onclick = null;
+        }
+      });
     };
 
     if (state.rows.length > 0) {
@@ -272,42 +294,66 @@
       return;
     }
     if (!view) {
-      show("还没有结果", "输入目标域名后开始查询", null, null);
+      show("还没有结果", "输入目标域名后开始查询", []);
       return;
     }
+    const reasons = view.reasons.length;
+    const reasonAction = { label: "查看原因", handler: openReasons };
+    const retryAction = { label: "重新查询", handler: startQuery };
+
     if (view.matched === 0 && view.total > 0) {
       if (!view.terminal) {
-        show("查询进行中，暂无匹配记录", "已接收记录中没有符合当前筛选的内容", "清除筛选", clearFilters);
+        show("查询进行中，暂无匹配记录", "已接收记录中没有符合当前筛选的内容", [
+          { label: "清除筛选", handler: clearFilters },
+          reasonAction,
+        ].slice(0, reasons > 0 ? 2 : 1));
         return;
       }
-      show("当前筛选没有匹配结果", "清除筛选或调整关键词后重试", "清除筛选", clearFilters);
+      show("当前筛选没有匹配结果", "清除筛选或调整关键词后重试", [
+        { label: "清除筛选", handler: clearFilters },
+        reasonAction,
+      ].slice(0, reasons > 0 ? 2 : 1));
       return;
     }
     if (view.total === 0 && view.terminal) {
       if (view.status === "stopped") {
-        show("查询已停止，尚未取得结果", "已保留 0 条；可重新查询", "重新查询", startQuery);
-      } else if (view.status === "failed") {
+        show("查询已停止，尚未取得结果", "已保留 0 条；可重新查询", [
+          retryAction,
+          reasonAction,
+        ].slice(0, reasons > 0 ? 2 : 1));
+        return;
+      }
+      if (view.status === "failed") {
         show(
           "查询失败",
-          view.reasons.length > 0 ? view.reasons[0].message : "检查网络或代理后可重试",
-          "重新查询",
-          startQuery,
+          reasons > 0 ? view.reasons[0].message : "检查网络或代理后可重试",
+          [retryAction, reasonAction].slice(0, reasons > 0 ? 2 : 1),
         );
-      } else {
-        show(
-          "所选范围内没有存档记录",
-          `目标 ${view.scope.label} · 范围 ${view.scope.rangeLabel}`,
-          "重新查询",
-          startQuery,
-        );
+        return;
       }
+      // 部分完成 / 范围未知 / 解析丢行等情况：不得宣称“没有存档”
+      if (view.completion !== "complete" || reasons > 0) {
+        show(
+          "未取得可用记录",
+          `${reasons > 0 ? `${reasons} 项未完成原因；` : ""}目标 ${view.scope.label} · 范围 ${
+            view.scope.rangeLabel
+          }`,
+          [reasonAction, retryAction],
+        );
+        return;
+      }
+      show(
+        "所选范围内没有存档记录",
+        `目标 ${view.scope.label} · 范围 ${view.scope.rangeLabel}`,
+        [retryAction],
+      );
       return;
     }
     if (view.total === 0) {
-      show("正在读取…", "已接收的记录会实时出现在这里", null, null);
+      show("正在读取…", "已接收的记录会实时出现在这里", []);
       return;
     }
-    show("没有可显示的结果", "调整筛选条件后重试", "清除筛选", clearFilters);
+    show("没有可显示的结果", "调整筛选条件后重试", [{ label: "清除筛选", handler: clearFilters }]);
   }
 
   /* ------------------------------------------------------------------ */
@@ -359,20 +405,6 @@
     const dialog = $("reasons-dialog");
     if (typeof dialog.showModal === "function") dialog.showModal();
     else dialog.setAttribute("open", "");
-  }
-
-  function reasonsSummary() {
-    const lines = ["未完成原因："];
-    if (state.scope) {
-      lines.push(`目标 ${state.scope.label} · 范围 ${state.scope.rangeLabel}`);
-      lines.push(`读取上限 ${state.scope.budgetLabel || "-"}`);
-    }
-    for (const reason of state.reasons) {
-      const meta = reasonDetail(reason);
-      lines.push(`- ${reasonLabel(reason)}${reason.message ? `：${reason.message}` : ""}${meta ? `（${meta}）` : ""}`);
-    }
-    if (state.reasons.length === 0) lines.push("- 无");
-    return lines.join("\n");
   }
 
   /* ------------------------------------------------------------------ */
@@ -521,7 +553,37 @@
     renderEmpty(view);
     renderReasons(view);
     renderSortHeaders();
-    updateDirtyHint();
+    updateConfigHint();
+  }
+
+  function showPreparingEmpty() {
+    $("empty-state").classList.remove("hidden");
+    $("empty-title").textContent = "准备中…";
+    $("empty-detail").textContent = "正在建立查询会话，接收到的记录会实时出现在这里";
+    $("empty-action").classList.add("hidden");
+    $("empty-action-2").classList.add("hidden");
+  }
+
+  function resetWorkspaceForStart() {
+    state.rows = [];
+    state.selected = new Set();
+    state.matched = 0;
+    state.unique = 0;
+    state.received = 0;
+    state.total = 0;
+    state.pageCount = 0;
+    state.pageIndex = 0;
+    state.reasons = [];
+    state.progress = null;
+    state.view = null;
+    $("rows-body").textContent = "";
+    $("summary").textContent = "匹配 0 / 去重 0 / 接收 0";
+    $("page-range").textContent = "0 条";
+    $("page-label").textContent = "第 0 / 0 页";
+    $("prev-page").disabled = true;
+    $("next-page").disabled = true;
+    renderReasons(null);
+    renderEmpty(null);
   }
 
   /* ------------------------------------------------------------------ */
@@ -530,37 +592,30 @@
 
   async function refresh() {
     if (!bridge || state.jobId === null) return;
-    if (refreshing) {
-      refreshPending = true;
-      return;
-    }
-    refreshing = true;
-    try {
-      const result = await bridge.getView({
-        jobId: state.jobId,
-        source: state.source,
-        filter: state.appliedFilter,
-        sort: state.sort,
-        pageIndex: state.pageIndex,
-        pageSize: state.pageSize,
-      });
-      if (!result.ok) {
-        if (result.error.code === "STALE_VIEW") {
-          setStatus("idle");
-          setNotice("任务已结束，请重新查询。", "error");
-          return;
-        }
-        setNotice(describeError(result.error), "error");
+    // 请求代际：只有最新一次请求的响应可以渲染，旧响应直接丢弃
+    const generation = ++state.viewGeneration;
+    const jobId = state.jobId;
+    const source = state.source;
+    const result = await bridge.getView({
+      jobId,
+      source,
+      filter: state.appliedFilter,
+      sort: state.sort,
+      pageIndex: state.pageIndex,
+      pageSize: state.pageSize,
+    });
+    if (generation !== state.viewGeneration) return;
+    if (jobId !== state.jobId || source !== state.source) return;
+    if (!result.ok) {
+      if (result.error.code === "STALE_VIEW") {
+        setNotice("结果已更新，请重新查询。", "error");
         return;
       }
-      render(result.value);
-    } finally {
-      refreshing = false;
-      if (refreshPending) {
-        refreshPending = false;
-        scheduleRefresh();
-      }
+      setNotice(describeError(result.error), "error");
+      return;
     }
+    if (result.value.jobId !== jobId || result.value.source !== source) return;
+    render(result.value);
   }
 
   function scheduleRefresh() {
@@ -648,41 +703,63 @@
   /* 查询                                                                  */
   /* ------------------------------------------------------------------ */
 
-  function readRange() {
+  function readRangeSelection() {
     const mode = $("range-mode").value;
     if (mode === "recent") {
-      const months = Number($("range-months").value || 3);
-      if (!Number.isInteger(months) || months < 1 || months > 120) {
-        return { error: "月数必须是 1–120 的整数。" };
-      }
-      return { range: { kind: "recent", months } };
+      return { kind: "recent", months: Number($("range-months").value || 3) };
     }
     if (mode === "month") {
-      const year = Number($("range-year").value || new Date().getUTCFullYear());
-      const month = Number($("range-month-value").value || 1);
-      if (!Number.isInteger(year) || year < 2000 || year > 2100) {
+      return {
+        kind: "month",
+        year: Number($("range-year").value || new Date().getUTCFullYear()),
+        month: Number($("range-month-value").value || 1),
+      };
+    }
+    return { kind: "all" };
+  }
+
+  function readProxySelection() {
+    const mode = $("proxy-mode").value;
+    if (mode === "fixed") return { mode, server: $("proxy-server").value.trim() };
+    return { mode };
+  }
+
+  function rangeKey(range) {
+    return JSON.stringify(range);
+  }
+
+  function proxyKey(proxy) {
+    return `${proxy.mode}|${proxy.server || ""}`;
+  }
+
+  function readRange() {
+    const range = readRangeSelection();
+    if (range.kind === "recent") {
+      if (!Number.isInteger(range.months) || range.months < 1 || range.months > 120) {
+        return { error: "月数必须是 1–120 的整数。" };
+      }
+    }
+    if (range.kind === "month") {
+      if (!Number.isInteger(range.year) || range.year < 2000 || range.year > 2100) {
         return { error: "年份必须是 2000–2100 的整数。" };
       }
-      if (!Number.isInteger(month) || month < 1 || month > 12) {
+      if (!Number.isInteger(range.month) || range.month < 1 || range.month > 12) {
         return { error: "月份必须是 1–12 的整数。" };
       }
-      return { range: { kind: "month", year, month } };
     }
-    return { range: { kind: "all" } };
+    return { range };
   }
 
   function readProxy() {
-    const mode = $("proxy-mode").value;
-    if (mode === "fixed") {
-      const server = $("proxy-server").value.trim();
-      if (!server) return { error: "固定代理需要填写地址，例如 http://127.0.0.1:7890。" };
-      return { proxy: { mode, server } };
+    const proxy = readProxySelection();
+    if (proxy.mode === "fixed" && !proxy.server) {
+      return { error: "固定代理需要填写地址，例如 http://127.0.0.1:7890。" };
     }
-    return { proxy: { mode } };
+    return { proxy };
   }
 
   async function startQuery() {
-    if (!bridge) return;
+    if (!bridge || state.starting) return;
     const target = $("target-input").value.trim();
     if (!target) {
       setNotice("请输入目标域名后再开始查询。", "error");
@@ -700,52 +777,76 @@
       return;
     }
 
+    const source = $("source-select").value;
+    const previousStatus = state.status === "idle" ? "idle" : state.status;
     setNotice("");
-    const result = await bridge.startQuery({
-      target,
-      source: $("source-select").value,
-      range: range.range,
-      proxy: proxy.proxy,
-    });
+    state.starting = true;
+    // await 之前立即进入准备态并禁用操作，避免重复提交
+    setStatus("preparing");
+    $("cancel-button").disabled = true;
+    resetWorkspaceForStart();
+    showPreparingEmpty();
+
+    let result;
+    try {
+      result = await bridge.startQuery({
+        target,
+        source,
+        range: range.range,
+        proxy: proxy.proxy,
+      });
+    } catch (error) {
+      result = { ok: false, error: { code: "INTERNAL", message: String(error) } };
+    } finally {
+      state.starting = false;
+    }
+
     if (!result.ok) {
       setNotice(describeError(result.error), "error");
+      setStatus(previousStatus);
+      // 回滚到上一次查询的权威视图（旧任务仍然有效）
+      await refresh().catch(() => undefined);
       return;
     }
 
     state.jobId = result.value.jobId;
     state.source = result.value.source;
     state.lastJobTarget = target;
+    state.frozen = {
+      target,
+      source,
+      rangeKey: rangeKey(range.range),
+      proxyKey: proxyKey(proxy.proxy),
+    };
     state.revision = 0;
-    state.pageIndex = 0;
-    state.rows = [];
-    state.selected = new Set();
-    state.reasons = [];
-    state.progress = null;
+    state.viewGeneration += 1;
     state.lastSeq = 0;
     state.scope = result.value.scope || null;
-    state.view = null;
-    setStatus("preparing");
-    renderScope({ scope: state.scope });
-    renderReasons(null);
-    renderPager(null);
-    renderEmpty(null);
-    updateDirtyHint();
-
-    if (state.scope) {
-      renderStatus(null);
-      $("task-text").textContent = `准备中 · ${state.scope.label} · ${state.scope.rangeLabel}`;
-    }
+    resetWorkspaceForStart();
+    showPreparingEmpty();
+    renderScope({ scope: state.scope, source: result.value.source });
+    renderStatus(null);
+    $("task-text").textContent = `准备中 · ${target} · 正在建立查询会话…`;
+    updateConfigHint();
     await refresh();
   }
 
   async function cancelQuery() {
-    if (!bridge || state.jobId === null) return;
+    if (!bridge || state.jobId === null || state.starting) return;
+    if (TERMINAL.has(state.status)) return;
     const result = await bridge.cancelQuery({ jobId: state.jobId, source: state.source });
     if (!result.ok) {
       setNotice(describeError(result.error), "error");
       return;
     }
-    setStatus(result.value.status);
+    const status = result.value.status;
+    if (TERMINAL.has(status)) {
+      // 取消到达时任务已自然结束：以终态为准，不回写成“停止中”
+      setStatus(status);
+      scheduleRefresh();
+      return;
+    }
+    setStatus(status);
     $("task-text").textContent = "停止中 · 等待在途请求结束…";
   }
 
@@ -783,8 +884,7 @@
   }
 
   function selectedRowIds() {
-    if (state.selected.size > 0) return Array.from(state.selected);
-    return state.rows.map((row) => row.rowId);
+    return Array.from(state.selected);
   }
 
   async function copySelected(mode) {
@@ -794,7 +894,7 @@
     }
     const rowIds = selectedRowIds();
     if (rowIds.length === 0) {
-      setNotice("当前页没有可复制的记录。", "error");
+      setNotice("请先勾选要复制的行（或在表头全选当前页）。", "error");
       return;
     }
     const result = await bridge.copySelection({
@@ -840,7 +940,8 @@
   }
 
   function bind() {
-    $("target-input").addEventListener("input", updateDirtyHint);
+    $("target-input").addEventListener("input", updateConfigHint);
+    $("source-select").addEventListener("change", updateConfigHint);
 
     $("start-button").addEventListener("click", () => void startQuery());
     $("cancel-button").addEventListener("click", () => void cancelQuery());
@@ -925,12 +1026,26 @@
     $("reasons-button").addEventListener("click", openReasons);
     $("reasons-close").addEventListener("click", () => $("reasons-dialog").close());
     $("reasons-copy").addEventListener("click", () => {
-      const ok = copyText(reasonsSummary());
-      setNotice(ok ? "原因摘要已复制。" : "复制失败，请手动选择文本。", ok ? "ok" : "error");
+      // 原因摘要复制需要主进程剪贴板通道（尚未交付），不得提示成功。
+      selectElementContents($("reasons-list"));
+      setNotice(
+        "原因摘要复制尚未接通主进程剪贴板通道；已选中原因文本，可手动 Ctrl+C 复制。",
+        "error",
+      );
     });
 
-    $("range-mode").addEventListener("change", toggleRangeInputs);
-    $("proxy-mode").addEventListener("change", toggleProxyInputs);
+    $("range-mode").addEventListener("change", () => {
+      toggleRangeInputs();
+      updateConfigHint();
+    });
+    for (const id of ["range-months", "range-year", "range-month-value"]) {
+      $(id).addEventListener("input", updateConfigHint);
+    }
+    $("proxy-mode").addEventListener("change", () => {
+      toggleProxyInputs();
+      updateConfigHint();
+    });
+    $("proxy-server").addEventListener("input", updateConfigHint);
 
     if (!bridge) {
       setNotice("preload 桥接不可用，界面只能查看空状态。", "error");
@@ -947,13 +1062,12 @@
         state.progress = event.payload;
         if (typeof event.payload.received === "number") state.received = event.payload.received;
         if (typeof event.payload.unique === "number") state.unique = event.payload.unique;
-        if (state.view && ACTIVE.has(state.status)) {
-          $("task-text").textContent = taskTextFor({
-            ...state.view,
-            status: "running",
-            received: state.received,
-            unique: state.unique,
-          });
+        if (ACTIVE.has(state.status)) {
+          const progress = state.progress;
+          let where = "正在读取";
+          if (progress && progress.indexId) where = `索引 ${progress.indexId} 第 ${progress.page || 1} 页`;
+          else if (progress && progress.page) where = `第 ${progress.page} 页`;
+          $("task-text").textContent = `查询中 · ${where} · 已接收 ${state.received} / 去重 ${state.unique}`;
         }
       }
       if (event.kind === "state" && typeof event.payload.status === "string") {
@@ -968,6 +1082,10 @@
           setStatus(next);
           if (next === "stopping") {
             $("task-text").textContent = "停止中 · 等待在途请求结束…";
+          } else if (next === "preparing") {
+            $("task-text").textContent = "准备中 · 正在建立查询会话…";
+          } else if (next === "running") {
+            $("task-text").textContent = `查询中 · 已接收 ${state.received} / 去重 ${state.unique}`;
           }
         }
       }
@@ -988,6 +1106,7 @@
     renderSortHeaders();
     setStatus("idle");
     renderEmpty(null);
+    updateConfigHint();
     bind();
   }
 
