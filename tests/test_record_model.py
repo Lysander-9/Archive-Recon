@@ -38,7 +38,7 @@ class ArchiveRecordTests(unittest.TestCase):
         self.assertEqual(record.status_code, "200")
         self.assertEqual(record.length, "1024")
 
-    def test_to_export_row_keeps_six_column_contract(self):
+    def test_to_export_row_keeps_five_field_contract(self):
         record = ArchiveRecord(
             url="https://example.com/a",
             status_code="200",
@@ -51,6 +51,7 @@ class ArchiveRecordTests(unittest.TestCase):
 
         row = record.to_export_row()
 
+        self.assertEqual(len(EXPORT_COLUMNS), 5)
         self.assertEqual(tuple(row.keys()), EXPORT_COLUMNS)
         self.assertEqual(
             row,
@@ -62,8 +63,11 @@ class ArchiveRecordTests(unittest.TestCase):
                 "url": "https://example.com/a",
             },
         )
-        self.assertNotIn("source", row)
+        # 界面行号与内部字段都不进入导出
+        self.assertEqual(len(row), 5)
         self.assertNotIn("#", row)
+        self.assertNotIn("source", row)
+        self.assertNotIn("raw_timestamp", row)
 
     def test_full_mapping_keeps_source_and_raw_timestamp(self):
         record = ArchiveRecord.from_mapping({

@@ -65,14 +65,54 @@ class ExportAlignmentTests(unittest.TestCase):
         with open(csv_path, "rb") as handle:
             raw = handle.read()
         self.assertTrue(raw.startswith(b"\xef\xbb\xbf"))
+        # 与基线 8e6aaf9 实际输出一致的表头行（BOM 后紧接五字段，CRLF 结尾）
+        self.assertTrue(
+            raw.startswith(
+                b"\xef\xbb\xbftimestamp,status_code,length,file_type,url\r\n"
+            ),
+            raw[:80],
+        )
 
         with open(csv_path, encoding="utf-8-sig", newline="") as handle:
             rows = list(csv.reader(handle))
 
         self.assertEqual(rows[0], ["timestamp", "status_code", "length", "file_type", "url"])
+        self.assertEqual(len(rows[0]), 5)
         self.assertEqual(len(rows), 71)
         self.assertNotIn("#", rows[0])
         self.assertNotIn("source", rows[0])
+        self.assertNotIn("raw_timestamp", rows[0])
+
+    def test_extra_internal_keys_are_never_exported(self):
+        record = ArchiveRecord(
+            url="https://example.com/internal",
+            status_code="200",
+            length="7",
+            file_type="text/html",
+            timestamp="2024-01-02",
+            source="wayback",
+            raw_timestamp="20240102123456",
+        ).to_mapping()
+        record["#"] = 1
+
+        csv_path = self.path("internal.csv")
+        json_path = self.path("internal.json")
+        write_csv([record], csv_path)
+        write_json([record], json_path)
+
+        with open(csv_path, encoding="utf-8-sig", newline="") as handle:
+            header = next(csv.reader(handle))
+        with open(json_path, encoding="utf-8") as handle:
+            exported = json.load(handle)
+
+        self.assertEqual(header, ["timestamp", "status_code", "length", "file_type", "url"])
+        self.assertEqual(
+            list(exported[0].keys()),
+            ["timestamp", "status_code", "length", "file_type", "url"],
+        )
+        self.assertNotIn("source", exported[0])
+        self.assertNotIn("raw_timestamp", exported[0])
+        self.assertNotIn("#", exported[0])
 
     def test_json_matches_filtered_view_and_column_order(self):
         json_path = self.path("results.json")

@@ -12,16 +12,18 @@ import archrecon  # 包入口，导出下列全部公开名称
 ### `ArchiveRecord`
 
 不可变记录，字段：`url`、`status_code`、`length`、`file_type`、`timestamp`、
-`source`、`raw_timestamp`。
+`source`、`raw_timestamp`。其中 `source` 与 `raw_timestamp` 仅内部使用，不导出。
 
 - `ArchiveRecord.from_mapping(mapping)`：接受既有标准化字典，也兼容
   `original` / `statuscode` / `mimetype` 等原始字段名，非字符串值自动转字符串。
-- `to_export_row()`：六列导出字典，键顺序固定
-  `timestamp, status_code, length, file_type, url`，不含 `#` 行号与 `source`。
+- `to_export_row()`：导出字典，**固定五个数据字段**，键顺序固定
+  `timestamp, status_code, length, file_type, url`；不含界面行号 `#`，
+  也不含 `source` / `raw_timestamp`。
 - `value_of(column)`：读取任意界面列，未知列返回空串。
-- `to_mapping()`：包含 `source`、`raw_timestamp` 的完整字典。
+- `to_mapping()`：包含 `source`、`raw_timestamp` 的完整字典（仅内部使用）。
 
-`EXPORT_COLUMNS` / `DISPLAY_COLUMNS` 为对应的列顺序常量。
+`EXPORT_COLUMNS` 为导出字段顺序常量（5 项），`DISPLAY_COLUMNS` 为界面数据列
+（同为 5 项，渲染时行号 `#` 另加）。
 
 ### 错误
 
@@ -45,7 +47,7 @@ collection = ResultCollection(records=None, source_name="wayback")
 | `set_sort(column, reverse=False) -> int` / `clear_sort()` | 设置/清除排序 |
 | `view` | 当前筛选 + 排序后的只读视图（新集合，不修改 `records`） |
 | `page(index, size)` / `page_count(size)` | 分页切片与总页数 |
-| `snapshot()` | 导出快照：当前视图全部记录（六列字典），与界面顺序一致 |
+| `snapshot()` | 导出快照：当前视图全部记录（五字段字典），与界面顺序一致 |
 | `total_count` / `view_count` / `urls()` | 统计信息 |
 
 `AppendOutcome`：`added`、`duplicates`、`batch_duplicates`、
@@ -93,16 +95,29 @@ jobs.finish_active(JobStatus.PARTIAL, "原因")
 ## 5. 导出
 
 ```python
-write_csv(rows, path) -> int    # UTF-8 BOM，六列表头，原子替换
+write_csv(rows, path) -> int    # UTF-8 BOM，五字段表头，原子替换
 write_json(rows, path) -> int   # 对象数组，ensure_ascii=False，indent=2
 ```
 
+导出字段固定为 `timestamp, status_code, length, file_type, url`（5 项）。
+行入参即使带有 `source` / `raw_timestamp` / `#` 等额外键，也只会写出上述五个字段。
+
 `rows` 来自 `collection.snapshot()`；导出内容与筛选快照一致，不受当前页影响。
 写入失败抛出 `AppError(ErrorCode.EXPORT)`，不会留下临时文件或覆盖原文件。
+
+### 基线兼容证据（8e6aaf9）
+
+以基线分支的 `ResultsTable._export_csv` / `_export_json` 实际执行输出为参照，
+使用同一批含中文、逗号、引号、空值的记录对比：
+
+- 基线表头：`timestamp,status_code,length,file_type,url`（5 项）；新实现表头相同；
+- CSV（含 UTF-8 BOM）与 JSON 输出**逐字节一致**；
+- 基线 JSON 键集合与新实现一致，均不含 `source`、`raw_timestamp`、`#`。
 
 ## 6. 已知边界
 
 - 界面仍使用 `Widget.after` 向主线程投递事件，尚未改为有界队列；归属校验已生效。
 - 停止依赖在途请求超时收敛，不保证毫秒级中断。
-- 导出保持既有六列，未对 CSV 公式注入做转义（与基线输出保持一致）。
+- 导出保持既有五字段输出，未对 CSV 公式注入做转义（与基线输出保持一致）。
+- 界面结果表格为 6 列（行号 `#` + 五字段），导出仍为 5 字段。
 - `api_client` 的月份近似与日志时区问题不在本批范围。

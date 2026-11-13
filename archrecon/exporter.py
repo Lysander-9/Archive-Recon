@@ -1,8 +1,9 @@
-"""导出实现：CSV / JSON 固定六列，原子写入。
+"""导出实现：CSV / JSON 固定五个数据字段，原子写入。
 
-兼容既有导出契约：
+兼容既有导出契约（基线 ``8e6aaf9`` 实测输出）：
 - CSV 使用 UTF-8 BOM（``utf-8-sig``），表头顺序 ``timestamp,status_code,length,file_type,url``；
 - JSON 为对象数组，``ensure_ascii=False``、两空格缩进；
+- 只导出上述五个字段，界面行号 ``#``、内部 ``source`` / ``raw_timestamp`` 不导出；
 - 导出内容由调用方传入的筛选快照决定，不受当前分页影响。
 
 写入时先写同目录临时文件再 ``os.replace``，失败不会留下半成品文件或覆盖原文件。

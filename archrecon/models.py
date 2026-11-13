@@ -1,7 +1,9 @@
 """核心数据模型。
 
 本模块只依赖标准库，GUI 与离线测试共用。记录字段与既有导出契约保持一致：
-CSV / JSON 固定六列（含行号之外的五个数据字段），顺序见 ``EXPORT_COLUMNS``。
+导出固定为五个数据字段 ``timestamp,status_code,length,file_type,url``，
+顺序见 ``EXPORT_COLUMNS``；界面另有行号列 ``#``，内部 ``source`` 与
+``raw_timestamp`` 字段只用于程序内部，不进入导出。
 """
 
 from __future__ import annotations
@@ -9,10 +11,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Mapping
 
-#: 导出列顺序，必须与基线 CSV / JSON 输出一致（不含界面行号列 ``#``）。
+#: 导出字段顺序，必须与基线 CSV / JSON 输出一致；界面行号列 ``#`` 不导出。
 EXPORT_COLUMNS = ("timestamp", "status_code", "length", "file_type", "url")
 
-#: 结果表格展示列（界面只在最前面额外加一列行号）。
+#: 界面结果表格的数据列（渲染时在最前面额外加一列行号 ``#``）。
 DISPLAY_COLUMNS = EXPORT_COLUMNS
 
 _ALIASES = {
