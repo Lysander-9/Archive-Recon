@@ -112,6 +112,25 @@ test("T3: a UTC month boundary index is not included by a local-time shift", () 
   assert.deepEqual(ids(result), [], "November index must not intersect October");
 });
 
+test("T3: invalid calendar dates are unknown and never roll into the next month", () => {
+  const invalidRanges = [
+    ["2024-02-30T00:00:00", "2024-03-10T00:00:00"],
+    ["20240230000000", "20240310000000"],
+    ["2024-04-31T12:00:00", "2024-05-10T00:00:00"],
+  ];
+  for (const [from, to] of invalidRanges) {
+    const meta = parseCcIndex({
+      id: `CC-MAIN-INVALID-${from}`,
+      "cdx-api": "https://index.commoncrawl.org/invalid-index",
+      from,
+      to,
+    });
+    assert.ok(meta);
+    assert.equal(meta?.unknown, true, `invalid date rolled over: ${from}`);
+    assert.equal(meta?.fromMs, null, `invalid date produced an epoch: ${from}`);
+  }
+});
+
 test("T3: malformed Common Crawl lines are counted and surfaced as reasons", async () => {
   const transport = createFixtureTransport({ collinfo: "selected", pageCount: 1, wayback: "short" });
   const adapter = new CommonCrawlAdapter({ indexBaseUrl: "http://fixture.local/cc" });

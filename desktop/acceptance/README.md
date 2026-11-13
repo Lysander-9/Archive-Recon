@@ -29,24 +29,30 @@ node acceptance/run-acceptance.mjs
 # 构建 Electron 代理验收脚本并运行（真实 session.fetch + 环回代理）
 node acceptance/prepare.mjs
 .\node_modules\electron\dist\electron.exe acceptance\proxy\generated\run-proxy-acceptance.cjs
+
+# 独立打包验收（先 npm run dist:win；精确等待“完成”再重试行数）
+node acceptance/packaged/run-packaged-acceptance.mjs
 ```
 
-当前基线结果（2026-11-13，提交 `a417955`）：
+当前基线结果（2026-11-13，提交 `a417955`，第二轮新增回归）：
 
 | 项 | 结果 |
 |---|---|
-| 独立验收 | **54 tests / 49 pass / 4 fail / 1 skip**，exit 1 |
-| 失败 | T1 百分号编码主机 1 项；T3 UTC 元数据 3 项 |
+| 独立验收 | **89 tests / 68 pass / 20 fail / 1 skip**，exit 1 |
+| 失败组 | T1 非法主机字符（9 个子用例）；R6 并发/会话 5 项；T3 UTC 3 项；Wayback 坏行续页 1 项；非法日期回卷 1 项 |
 | skip | 无 Node/Python 干净 Windows 环境的 ZIP 验收（真实缺口，不删除） |
 | 开发自测（仅记录） | unit 42 pass；Electron E2E 4 pass |
 | 构建 | typecheck 通过；build 通过；`dist:win` 产出 win-unpacked + ZIP |
+| 独立打包验收 | `node acceptance/packaged/run-packaged-acceptance.mjs` → **PACKAGED_ACCEPTANCE_RESULT ok=true**（精确“完成”、重试行数 3、CSV 五字段/BOM） |
 
-4 个失败是生产代码缺陷证据，不得通过修改断言消除：
+失败是生产代码缺陷证据，不得通过修改断言消除：
 
-1. `normalizeTarget("exa%6Dple.com")` 被接受（非法主机表示未拒绝）。
-2. `parseOfficialTimestamp` 对无时区后缀的官方时间使用本地时间而非 UTC。
-3. 上述 UTC 偏差使跨月/边界索引选择错误（2025-05 漏选 2025-18；
-   `2024-11-01T00:00:00` 被误判为与 2024-10 相交）。
+1. `normalizeTarget` 接受 `*.*.example.com`、内嵌 `*`、反斜杠、下划线、百分号编码等非法主机；
+2. 并发 `startQuery`/双击在 `sessions.create` await 前未原子占用槽位 → 两个 job/session/请求组；
+3. `sessions.create` 未完成时 `closeAll` 不阻止后续启动；`closeAll` 不调用 `session.close`；关闭后仍可启动新查询；
+4. `parseOfficialTimestamp` 对无时区官方时间使用本地时区；跨月/边界选择错误；
+5. 非法日期（`2024-02-30`、`20240230000000`、`2024-04-31`）被 Date 回卷而非判 unknown；
+6. Wayback 满页 50 原始行含 1 坏行时，用清洗后 49 行判断 `hasMore=false`，提前停止，漏掉下一页。
 
 ## 目录
 
@@ -58,13 +64,18 @@ node acceptance/prepare.mjs
 | `harness/test-utils.ts` | 固定时钟、临时目录、基线记录 |
 | `tests/t1-target.test.ts` | T1 目标校验、零会话、请求范围、域名筛选 |
 | `tests/t2-lifecycle.test.ts` | 成功/零结果/失败/部分、BUSY、末页/空页/CC 取消终态 |
-| `tests/t3-time-metadata.test.ts` | 官方 from/to 相交、跨月、最近 N 月、异常元数据、UTC、丢行计数 |
+| `tests/t3-time-metadata.test.ts` | 官方 from/to 相交、跨月、最近 N 月、异常元数据、UTC、非法日期、丢行计数 |
+| `tests/t3-wayback-continuation.test.ts` | Wayback 满页含坏行仍使用原始行数续页 |
 | `tests/t4-results.test.ts` | 去重、筛选/排序、分页、R1 缓存失效、新查询隔离 |
+| `tests/t4-perf-10k.test.ts` | 1 万条筛选/排序/分页与五字段快照计时 |
 | `tests/t5-export.test.ts` | 五字段字节样本、120→70 快照、STALE_VIEW、写失败、复制 |
 | `tests/r3-r4-isolation.test.ts` | 目标冻结、CC→Wayback 隔离、错误来源拒绝、事件来源 |
 | `tests/r5-close-proxy.test.ts` | closeAll/停止重启、代理配置与脱敏 |
+| `tests/r6-concurrency-sessions.test.ts` | 并发/双击单任务、创建期关闭、closeAll 会话清理、关闭后拒绝启动 |
 | `tests/t6-packaging.test.ts` | 夹具哈希、无 Python、生产 package/builder 白名单 |
 | `proxy/run-proxy-acceptance.ts` | 真实 Electron session 的环回 HTTP/SOCKS/认证/失败验收 |
+| `packaged/run-packaged-acceptance.mjs` | 独立打包验收：精确“完成”+ 可重试行数 + 五字段 CSV |
+| `packaged/run-double-click-acceptance.mjs` | 打包 exe 真实双击：只允许一个请求组 |
 | `fixtures/` | 官方 collinfo、异常元数据、来源响应、固定时钟、代理矩阵 |
 | `reports/` | 实际执行结果、缺陷与未覆盖项 |
 

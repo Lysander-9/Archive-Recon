@@ -28,7 +28,7 @@ test("T1: valid target forms normalize to a frozen host-and-subdomains scope", (
   }
 });
 
-test("T1: path/query/fragment/port/userinfo/whitespace/percent/backslash are rejected", () => {
+test("T1: path/query/fragment/port/userinfo/whitespace/invalid-host chars are rejected", async (t) => {
   const invalid = [
     "",
     "   ",
@@ -48,10 +48,20 @@ test("T1: path/query/fragment/port/userinfo/whitespace/percent/backslash are rej
     "example .com",
     "https://example.com\\@evil.test",
     "exa%6Dple.com",
+    "exa%20mple.com",
+    "*.*.example.com",
+    "foo.*.example.com",
+    "exa*mple.com",
+    "*example.com",
+    "example.com*",
+    "example.com\\foo",
+    "foo_bar.example.com",
   ];
   for (const input of invalid) {
-    const result = normalizeTarget(input);
-    assert.equal(result.ok, false, `accepted unexpectedly: ${JSON.stringify(input)}`);
+    await t.test(JSON.stringify(input), () => {
+      const result = normalizeTarget(input);
+      assert.equal(result.ok, false, `accepted unexpectedly: ${JSON.stringify(input)}`);
+    });
   }
 });
 

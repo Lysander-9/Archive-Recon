@@ -1,0 +1,62 @@
+{
+  "baseTestCommit": "e88f864",
+  "sha": "a417955",
+  "capturedAt": "2026-11-13",
+  "command": "node acceptance/run-acceptance.mjs",
+  "tests": 89,
+  "pass": 68,
+  "fail": 20,
+  "skipped": 1,
+  "failureGroups": [
+    {
+      "id": "T1-invalid-host-chars",
+      "inputs": ["*.*.example.com", "foo.*.example.com", "*example.com", "example.com*", "exa*mple.com", "example.com\\foo", "foo_bar.example.com", "exa%6Dple.com", "exa%20mple.com"],
+      "actual": "normalizeTarget ok:true",
+      "expected": "INVALID_INPUT"
+    },
+    {
+      "id": "R6-concurrency-sessions",
+      "actual": "two jobs/sessions/request groups; closeAll does not close session; start after close accepted; pending create starts request",
+      "expected": "one task slot, one session, closeAll closes sessions, closed manager rejects starts"
+    },
+    {
+      "id": "T3-utc-metadata",
+      "actual": "local-time parse; 2025-05 misses CC-MAIN-2025-18; Nov boundary intersects October",
+      "expected": "UTC parse and correct intersection"
+    },
+    {
+      "id": "T3-wayback-continuation",
+      "actual": "50 raw rows with 1 bad row -> hasMore=false, page 1 not requested, unique=49",
+      "expected": "raw row count drives continuation; page 1 requested; unique=51"
+    },
+    {
+      "id": "T3-invalid-date-rollover",
+      "actual": "2024-02-30 / 20240230000000 / 2024-04-31 normalized, unknown=false",
+      "expected": "unknown=true, fromMs=null"
+    }
+  ],
+  "performance": {
+    "records": 10000,
+    "filterSortPageSnapshotMs": [2.3, 1.0, 2.5],
+    "csvSnapshotMs": 13.7,
+    "csvBytes": 330941,
+    "targetMs": 2000
+  },
+  "budgetGap": "no response-byte or record budget; record_limit never emitted; full-body sync parse in main",
+  "packaged": {
+    "command": "node acceptance/packaged/run-packaged-acceptance.mjs",
+    "ok": true,
+    "status": "完成",
+    "rows": 3,
+    "csvBytes": 210
+  },
+  "packagedDoubleClick": {
+    "command": "node acceptance/packaged/run-double-click-acceptance.mjs",
+    "ok": false,
+    "waybackHits": 2,
+    "expected": 1
+  },
+  "skipped": [
+    "T6: packaged Windows ZIP without Node/Python is not yet verifiable (no clean environment)"
+  ]
+}
