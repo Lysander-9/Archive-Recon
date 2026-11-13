@@ -1,0 +1,40 @@
+{
+  "sha": "2c2438a",
+  "acceptanceSet": "75afc8f + R7 budget/endpoint/copy",
+  "capturedAt": "2026-11-13",
+  "command": "node acceptance/run-acceptance.mjs",
+  "tests": 95,
+  "pass": 87,
+  "fail": 7,
+  "skipped": 1,
+  "failures": [
+    {
+      "id": "T1-invalid-host-chars",
+      "inputs": ["*.*.example.com", "*example.com", "exa*mple.com", "example.com*", "foo.*.example.com", "foo_bar.example.com"],
+      "actual": "normalizeTarget ok:true",
+      "expected": "INVALID_INPUT"
+    }
+  ],
+  "passedNew": [
+    "record budget 2 -> 2 records, record_limit=1, partial",
+    "response byte budget retains 50 rows and partial",
+    "malicious cdx endpoints count=3 range_unknown, no malicious request",
+    "copyReasons/copySelection source+revision enforcement",
+    "RowView.interesting"
+  ],
+  "proxy": {
+    "http": "pass",
+    "httpAuth": "pass authorized=1",
+    "socks5": "pass",
+    "socks5Auth": "rejected before start (PROXY), zero origin/socks hits",
+    "failureNoDirect": "pass",
+    "loopbackDefaultBypass": "gap"
+  },
+  "dev": {
+    "typecheck": "pass",
+    "build": "pass",
+    "unit": "61 passed",
+    "e2e": "16 passed after rebuild"
+  },
+  "skipped": ["clean Windows ZIP without Node/Python"]
+}

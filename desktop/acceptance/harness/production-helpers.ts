@@ -183,6 +183,7 @@ export function createFixtureTransport(options: TransportOptions = {}): FixtureT
 export interface ManagerOptions {
   clockUtc?: string;
   proxy?: { mode: "direct" | "system" | "fixed"; server?: string };
+  budgets?: Record<string, number>;
 }
 
 export interface ManagerHarness {
@@ -222,6 +223,7 @@ export function createManager(transport: FixtureTransport | { fetch: Function },
       },
     },
     emit: (event: any) => events.push(event),
+    budgets: options.budgets,
   });
 
   const harness: ManagerHarness = {
@@ -237,6 +239,59 @@ export function createManager(transport: FixtureTransport | { fetch: Function },
         proxy: request.proxy ?? options.proxy ?? { mode: "direct" },
       });
       return result;
+    },
+    view(jobId, source, filter = { ...EMPTY_FILTER }, sort = { key: null, reverse: false }, pageIndex = 0, pageSize = 50) {
+      return manager.getView({ jobId, source, filter, sort, pageIndex, pageSize });
+    },
+    async waitTerminal(jobId, source, timeoutMs = 4000) {
+      const deadline = Date.now() + timeoutMs;
+      while (Date.now() < deadline) {
+        const view = harness.view(jobId, source);
+        if (view.ok && view.value.terminal) return view.value;
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      const view = harness.view(jobId, source);
+      throw new Error(`job ${jobId} not terminal: ${JSON.stringify(view)}`);
+    },
+  };
+  return harness;
+}
+
+export interface CustomSessions {
+  create(jobId: number, proxy: any): Promise<{ transport: any; proxy: any }>;
+  close(jobId: number): Promise<void>;
+}
+
+export function createManagerWithSessions(
+  transport: FixtureTransport | { fetch: Function },
+  sessions: CustomSessions,
+  options: ManagerOptions = {},
+): ManagerHarness {
+  const transportFn = (typeof transport === "function"
+    ? transport
+    : (url: string, init?: any) => transport.fetch(url, init)) as FixtureTransport;
+  const events: any[] = [];
+  const clockUtc = options.clockUtc ?? "2024-10-15T12:00:00Z";
+  const manager = new JobManager({
+    clock: () => new Date(clockUtc),
+    wayback: new WaybackAdapter({ baseUrl: "http://fixture.local/wayback" }),
+    commoncrawl: new CommonCrawlAdapter({ indexBaseUrl: "http://fixture.local/cc" }),
+    sessions,
+    emit: (event: any) => events.push(event),
+    budgets: options.budgets,
+  });
+  const harness: ManagerHarness = {
+    manager,
+    events,
+    sessions: sessions as any,
+    transport: transportFn,
+    async start(request) {
+      return manager.start({
+        target: request.target,
+        source: request.source,
+        range: request.range,
+        proxy: request.proxy ?? options.proxy ?? { mode: "direct" },
+      });
     },
     view(jobId, source, filter = { ...EMPTY_FILTER }, sort = { key: null, reverse: false }, pageIndex = 0, pageSize = 50) {
       return manager.getView({ jobId, source, filter, sort, pageIndex, pageSize });
