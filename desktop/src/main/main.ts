@@ -2,12 +2,13 @@
 
 import { promises as fs } from "node:fs";
 import path from "node:path";
-import { app, BrowserWindow, clipboard, dialog, ipcMain, session as electronSession, type IpcMainInvokeEvent } from "electron";
+import { app, BrowserWindow, clipboard, dialog, ipcMain, nativeTheme, session as electronSession, type IpcMainInvokeEvent } from "electron";
 
 import { JobManager } from "../application/job";
 import { AppError } from "../application/errors";
 import { CHANNELS } from "../contracts/channels";
-import type { ExportOutcome, JobEventDto, Result } from "../contracts/types";
+import type { ExportOutcome, JobEventDto, Result, ThemeSource, ThemeState } from "../contracts/types";
+import { SCHEMA_VERSION } from "../contracts/types";
 import * as validate from "../contracts/validate";
 import { CommonCrawlAdapter } from "./adapters/commoncrawl";
 import { WaybackAdapter } from "./adapters/wayback";
@@ -40,6 +41,14 @@ function guardSender(event: IpcMainInvokeEvent): void {
   ) {
     throw new AppError("CLOSED", "拒绝非主窗口调用");
   }
+}
+
+function readTheme(): ThemeState {
+  return {
+    schemaVersion: SCHEMA_VERSION,
+    shouldUseDarkColors: nativeTheme.shouldUseDarkColors,
+    themeSource: (nativeTheme.themeSource as ThemeSource) ?? "system",
+  };
 }
 
 async function handleExport(raw: unknown): Promise<Result<ExportOutcome>> {
@@ -157,6 +166,15 @@ function registerIpc(window: BrowserWindow): void {
       return toError(error);
     }
   });
+
+  ipcMain.handle(CHANNELS.themeGet, (event) => {
+    try {
+      guardSender(event);
+      return { ok: true as const, value: readTheme() };
+    } catch (error) {
+      return toError(error);
+    }
+  });
 }
 
 function createWindow(): BrowserWindow {
@@ -178,7 +196,17 @@ function createWindow(): BrowserWindow {
 
   window.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
   window.webContents.on("will-navigate", (event) => event.preventDefault());
+
+  // Restricted theme bridge: initial state via themeGet, changes via a single
+  // fixed channel. The listener is removed when the window closes.
+  const onThemeUpdated = (): void => {
+    if (window.isDestroyed() || window.webContents.isDestroyed()) return;
+    window.webContents.send(CHANNELS.themeChanged, readTheme());
+  };
+  nativeTheme.on("updated", onThemeUpdated);
+
   window.on("closed", () => {
+    nativeTheme.removeListener("updated", onThemeUpdated);
     manager?.closeAll();
     mainWindow = null;
   });

@@ -69,9 +69,26 @@ test.describe("target normalization (T1)", () => {
   test("rejects percent-encoded hosts, backslashes and control characters before parsing", () => {
     const cases = [
       "exa%6Dple.com",
+      "exa%20mple.com",
       "%65xample.com",
       "https://example.com\\@evil.test",
+      "example.com\\foo",
       "example.com\u0000.evil",
+    ];
+    for (const input of cases) {
+      const result = normalizeTarget(input);
+      expect(result.ok, input).toBe(false);
+    }
+  });
+
+  test("rejects extra wildcards, embedded stars and underscores", () => {
+    const cases = [
+      "*.*.example.com",
+      "foo.*.example.com",
+      "*example.com",
+      "example.com*",
+      "exa*mple.com",
+      "foo_bar.example.com",
     ];
     for (const input of cases) {
       const result = normalizeTarget(input);

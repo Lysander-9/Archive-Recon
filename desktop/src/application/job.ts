@@ -392,7 +392,25 @@ export class JobManager {
 
   private async runCommonCrawl(job: JobRuntime, options: RequestOptions): Promise<void> {
     const host = job.config.target.host;
-    const { metas, invalidCount } = await this.deps.commoncrawl.fetchIndexes(options);
+    let metas: CcIndexMeta[];
+    let invalidCount: number;
+    try {
+      ({ metas, invalidCount } = await this.deps.commoncrawl.fetchIndexes(options));
+    } catch (error) {
+      if (options.signal.aborted) return;
+      const failure = errorFromUnknown(error, "commoncrawl");
+      const metadataBudget = failure.code === "PARSE";
+      this.addReason(job, {
+        code: metadataBudget ? "range_unknown" : "network",
+        message: metadataBudget
+          ? `索引元数据超出读取预算或无法解析：${failure.message}`
+          : `索引元数据获取失败：${failure.message}`,
+        source: "commoncrawl",
+        retryable: failure.retryable,
+      });
+      job.completion = "unknown";
+      return;
+    }
     const selection = selectIndexes(metas, job.config.selection);
     if (selection.unknownExcluded > 0 || invalidCount > 0) {
       const parts = [];

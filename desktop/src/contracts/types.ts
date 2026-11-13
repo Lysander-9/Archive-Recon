@@ -256,3 +256,13 @@ export interface JobEventDto {
   kind: "state" | "progress" | "viewChanged" | "reason";
   payload: Record<string, unknown>;
 }
+
+/** Effective native theme exported to the renderer (read + change event). */
+export type ThemeSource = "system" | "light" | "dark";
+
+export interface ThemeState {
+  schemaVersion: typeof SCHEMA_VERSION;
+  /** Effective value from Electron nativeTheme.shouldUseDarkColors. */
+  shouldUseDarkColors: boolean;
+  themeSource: ThemeSource;
+}

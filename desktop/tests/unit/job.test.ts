@@ -659,6 +659,34 @@ test.describe("job manager (T1/T2/T3)", () => {
     expect(viewOf(manager, started.value.jobId).revision).toBeGreaterThan(runningRevision);
   });
 
+  test("metadata overrun surfaces a visible reason instead of failing silently", async () => {
+    const manager = new JobManager(
+      deps({
+        commoncrawl: {
+          fetchIndexes: async () => {
+            throw new AppError("PARSE", "响应体超过 8388608 字节上限，已中止读取");
+          },
+          pageCount: async () => 0,
+          queryPage: async () => ({ records: [], hasMore: false, parseSkipped: 0, reasons: [] }),
+        },
+      }),
+    );
+    const started = await manager.start({
+      target: "example.com",
+      source: "commoncrawl",
+      range: { kind: "recent", months: 3 },
+      proxy: { mode: "direct" },
+    });
+    expect(started.ok).toBe(true);
+    if (!started.ok) return;
+    await until(() => viewOf(manager, started.value.jobId, "commoncrawl").terminal);
+
+    const view = viewOf(manager, started.value.jobId, "commoncrawl");
+    expect(view.status).toBe("partial");
+    const reason = view.reasons.find((item) => item.code === "range_unknown");
+    expect(reason?.message).toContain("读取预算");
+  });
+
   test("reason summary copy is revision-checked and restricted to the job", () => {
     const environment = deps();
     const manager = new JobManager(environment);

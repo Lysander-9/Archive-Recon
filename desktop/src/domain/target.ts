@@ -1,6 +1,7 @@
 /** Strict target normalization: host and subdomains, "*.example.com" is an alias. */
 
 import type { TargetScope } from "../contracts/types";
+import { domainToASCII } from "node:url";
 
 export interface TargetFailure {
   ok: false;
@@ -63,21 +64,26 @@ export function normalizeTarget(input: string): TargetResult {
   if (!value) return invalid("域名格式无效，请输入 example.com 或 *.example.com。");
 
   const host = value.toLowerCase();
+  if (host.includes("*")) return invalid("域名格式无效，请输入 example.com 或 *.example.com。");
+  if (host.includes("_")) return invalid("域名格式无效，请检查各级域名标签。");
   if (host.length > 253) return invalid("域名格式无效，请检查各级域名标签。");
-  const labels = host.split(".");
+
+  const asciiHost = /^[\x00-\x7F]*$/.test(host) ? host : domainToASCII(host);
+  if (!asciiHost) return invalid("域名中包含无效字符，请检查后重试。");
+
+  const labels = asciiHost.split(".");
+  const LABEL = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
   for (const label of labels) {
-    if (!label || label.length > 63 || label.startsWith("-") || label.endsWith("-")) {
-      return invalid("域名格式无效，请检查各级域名标签。");
-    }
+    if (!LABEL.test(label)) return invalid("域名格式无效，请检查各级域名标签。");
   }
 
   return {
     ok: true,
     scope: {
-      host,
+      host: asciiHost,
       wildcard,
       match: "host-and-subdomains",
-      label: wildcard ? `*.${host}` : host,
+      label: wildcard ? `*.${asciiHost}` : asciiHost,
     },
   };
 }

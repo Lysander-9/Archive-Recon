@@ -58,6 +58,10 @@ npx playwright test --project=electron tests/e2e/ui-workspace.spec.ts
 原因面板、筛选（含域名/敏感路径）、排序/每页/跳页/行号、字号不动固定区、
 系统主题切换、勾选复制与筛选无匹配空态。
 
+当前候选验证记录（2026-11-13，Windows 11 / Node 26.13.0）：`typecheck`、`build`
+通过；单元 **63 passed**；Electron E2E **18 passed**（含 nativeTheme 契约）；
+独立 acceptance（`75afc8f`）**89 tests / 88 pass / 0 fail / 1 skip**。
+
 ## 可复现入口
 
 ```bash
@@ -123,11 +127,13 @@ node tests/integration/run-proxy-nonloopback.mjs
   其余端点按非法元数据计数并给 `range_unknown` 原因。
 
 IPC 方法：`archive:startQuery`、`archive:cancelQuery`、`archive:getView`、
-`archive:exportResults`、`archive:copySelection`、`archive:copyReasons`，事件通道
-`archive:jobEvent`。所有输入在 main 做运行时校验，校验发送方 `webContents` 与
-`senderFrame`，统一返回 `{ok:true,value}` / `{ok:false,error}`；默认 session
-显式拒绝所有权限请求。`copyReasons` 只按 `jobId/source/revision` 取该任务原因并由
-主进程写剪贴板，不开放任意 IPC 或任意文本剪贴板。
+`archive:exportResults`、`archive:copySelection`、`archive:copyReasons`、
+`archive:themeGet`，事件通道 `archive:jobEvent` 与 `archive:themeChanged`。
+所有输入在 main 做运行时校验，校验发送方 `webContents` 与 `senderFrame`，统一返回
+`{ok:true,value}` / `{ok:false,error}`；默认 session 显式拒绝所有权限请求。
+`copyReasons` 只按 `jobId/source/revision` 取该任务原因并由主进程写剪贴板，不开放
+任意 IPC 或任意文本剪贴板。`themeGet` 返回 `{schemaVersion,shouldUseDarkColors,themeSource}`，
+`themeChanged` 为同一结构的推送；窗口关闭时注销 nativeTheme 监听，不提供任意事件订阅。
 
 ## 已知缺口
 
@@ -142,7 +148,8 @@ IPC 方法：`archive:startQuery`、`archive:cancelQuery`、`archive:getView`、
 - 逐行“敏感路径高亮”契约已提供：`RowView.interesting` 由 domain 规则计算；界面接线
   待前端补。
 - 原因摘要复制已提供受限 `copyReasons` 桥（jobId/source/revision，主进程写剪贴板），
-  界面接线待前端补；当前界面仍用 `document.execCommand`。
+  主题已提供 `themeGet`/`themeChanged` 受限契约；界面接线待前端补；当前界面仍用
+  `document.execCommand`，也不读取 nativeTheme 事件。
 - 域名筛选的下拉提示仅来自当前页出现的域名，不代表全量域名清单。
 - 打包未签名；未打 NSIS/MSI；未在无 Node 的干净 Windows 机器做人工验收（本地已用
   打包后的 exe 受控启动验证）。

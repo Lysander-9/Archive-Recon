@@ -7,6 +7,8 @@ export const CHANNELS = {
   exportResults: "archive:exportResults",
   copySelection: "archive:copySelection",
   copyReasons: "archive:copyReasons",
+  themeGet: "archive:themeGet",
+  themeChanged: "archive:themeChanged",
   jobEvent: "archive:jobEvent",
 } as const;
 
