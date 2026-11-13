@@ -57,7 +57,7 @@ Windows 用户也可在仓库根目录双击 `start.bat`：它只在本地已存
 
 首次安装需要联网；构建产物与 `node_modules` 均不入库（见 `.gitignore`）。
 
-当前候选验证（Windows 11 / Node 26.13.0，2026-11-13）：`typecheck`、`build` 通过；单元 **63 passed**；Electron 真实窗口 E2E **18 passed**；独立 acceptance（`75afc8f`）**89 tests / 88 pass / 0 fail / 1 skip**。最终 ZIP 与干净 Windows 分发验证在集成冻结后单独记录。
+当前候选验证（Windows 11 / Node 26.13.0，2026-11-13）：`typecheck`、`build` 通过；单元 **72 passed**；Electron 真实窗口 E2E **29 passed**；独立 acceptance（`75afc8f` + `ccffa32`）**97 tests / 96 pass / 0 fail / 1 skip**。最终 ZIP 与干净 Windows 分发验证在集成冻结后单独记录。
 
 ## 目录结构
 
