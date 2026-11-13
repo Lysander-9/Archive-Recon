@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'none'; object-src 'none'; base-uri 'none'"
+    />
+    <title>Archive Recon</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <h1 class="brand">Archive Recon</h1>
+      <div class="field grow">
+        <label for="target-input">目标域名</label>
+        <input id="target-input" data-testid="target-input" placeholder="例如 example.com 或 *.example.com" />
+      </div>
+      <div class="field">
+        <label for="source-select">来源</label>
+        <select id="source-select" data-testid="source-select">
+          <option value="wayback">Wayback Machine</option>
+          <option value="commoncrawl">Common Crawl</option>
+        </select>
+      </div>
+      <div class="field">
+        <label for="range-mode">时间范围</label>
+        <select id="range-mode" data-testid="range-mode">
+          <option value="recent">最近 N 个月</option>
+          <option value="month">指定年月</option>
+          <option value="all">全部时间</option>
+        </select>
+      </div>
+      <div class="field range-extra" id="range-recent">
+        <label for="range-months">月数</label>
+        <input id="range-months" data-testid="range-months" type="number" min="1" max="120" value="3" />
+      </div>
+      <div class="field range-extra hidden" id="range-month">
+        <label for="range-year">年月</label>
+        <input id="range-year" data-testid="range-year" type="number" min="2000" max="2100" />
+        <input id="range-month-value" data-testid="range-month-value" type="number" min="1" max="12" value="1" />
+      </div>
+      <div class="field">
+        <label for="proxy-mode">代理</label>
+        <select id="proxy-mode" data-testid="proxy-mode">
+          <option value="direct">直连</option>
+          <option value="system">系统代理</option>
+          <option value="fixed">固定代理</option>
+        </select>
+      </div>
+      <div class="field hidden" id="proxy-fixed">
+        <label for="proxy-server">代理地址</label>
+        <input id="proxy-server" data-testid="proxy-server" placeholder="http://127.0.0.1:7890" />
+      </div>
+      <button id="start-button" data-testid="start-button">开始查询</button>
+      <button id="cancel-button" data-testid="cancel-button" class="danger" disabled>停止</button>
+    </header>
+
+    <section class="statusbar">
+      <span id="status-chip" data-testid="status-chip" class="chip idle">就绪</span>
+      <span id="scope-label" data-testid="scope-label"></span>
+      <span id="summary" data-testid="summary"></span>
+      <span id="notice" data-testid="notice"></span>
+    </section>
+
+    <section class="filters">
+      <input id="filter-status" data-testid="filter-status" placeholder="状态码，如 200,!404" />
+      <input id="filter-filetype" data-testid="filter-filetype" placeholder="文件类型" />
+      <input id="filter-url" data-testid="filter-url" placeholder="URL 关键词，! 排除" />
+      <button id="apply-filter" data-testid="apply-filter">应用筛选</button>
+      <button id="clear-filter" data-testid="clear-filter">清除条件</button>
+      <span class="spacer"></span>
+      <button id="export-csv" data-testid="export-csv">导出 CSV</button>
+      <button id="export-json" data-testid="export-json">导出 JSON</button>
+      <button id="copy-url" data-testid="copy-url">复制 URL</button>
+    </section>
+
+    <main class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th class="select-col"></th>
+            <th data-sort="timestamp">时间</th>
+            <th data-sort="status_code">状态码</th>
+            <th data-sort="length">长度</th>
+            <th data-sort="file_type">文件类型</th>
+            <th data-sort="url">URL</th>
+          </tr>
+        </thead>
+        <tbody id="rows-body" data-testid="rows-body"></tbody>
+      </table>
+      <p id="empty-state" data-testid="empty-state" class="empty">未开始；输入目标域名后开始查询。</p>
+    </main>
+
+    <footer class="pagination">
+      <button id="prev-page" data-testid="prev-page">上一页</button>
+      <span id="page-label" data-testid="page-label">第 1 / 1 页</span>
+      <button id="next-page" data-testid="next-page">下一页</button>
+      <label>
+        每页
+        <select id="page-size" data-testid="page-size">
+          <option>20</option>
+          <option selected>50</option>
+          <option>100</option>
+          <option>200</option>
+          <option>500</option>
+          <option>1000</option>
+        </select>
+      </label>
+    </footer>
+
+    <script src="renderer.js"></script>
+  </body>
+</html>

@@ -1,0 +1,35 @@
+{
+  "name": "archive-recon-desktop",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Archive Recon desktop app (TypeScript / Electron)",
+  "main": "dist/main/main.js",
+  "packageManager": "npm@11.20.0",
+  "engines": {
+    "node": "26.13.0",
+    "npm": "11.20.0"
+  },
+  "scripts": {
+    "clean": "node scripts/clean.mjs",
+    "build": "node scripts/build.mjs",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "playwright test --project=unit",
+    "test:e2e": "playwright test --project=electron",
+    "test:all": "playwright test",
+    "start": "electron dist/main/main.js",
+    "dist:win": "npm run build && electron-builder --win zip --x64 --config electron-builder.json",
+    "verify:packaged": "node scripts/verify-packaged.mjs"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.65.0",
+    "@types/node": "24.19.2",
+    "electron": "45.3.1",
+    "electron-builder": "26.18.0",
+    "esbuild": "0.28.2",
+    "typescript": "7.0.2"
+  },
+  "allowScripts": {
+    "electron@45.3.1": true,
+    "esbuild@0.28.2": true
+  }
+}

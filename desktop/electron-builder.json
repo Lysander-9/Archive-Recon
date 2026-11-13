@@ -1,0 +1,29 @@
+{
+  "appId": "ai.multica.guidewire.archive-recon",
+  "productName": "Archive Recon",
+  "directories": {
+    "output": "release"
+  },
+  "files": [
+    "dist/**/*",
+    "package.json"
+  ],
+  "asar": true,
+  "compression": "normal",
+  "win": {
+    "target": [
+      {
+        "target": "zip",
+        "arch": [
+          "x64"
+        ]
+      }
+    ],
+    "artifactName": "ArchiveRecon-${version}-win-x64.${ext}",
+    "signAndEditExecutable": false,
+    "verifyUpdateCodeSignature": false
+  },
+  "extraMetadata": {
+    "main": "dist/main/main.js"
+  }
+}
