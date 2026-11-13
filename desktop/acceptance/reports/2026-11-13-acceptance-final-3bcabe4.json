@@ -1,0 +1,44 @@
+{
+  "sha": "3bcabe479552f009a606fae3844272cb1fbf61c3",
+  "acceptanceSet": "31aea33 (75afc8f + R7 + R8)",
+  "capturedAt": "2026-11-13",
+  "command": "node acceptance/run-acceptance.mjs",
+  "tests": 103,
+  "pass": 102,
+  "fail": 0,
+  "skipped": 1,
+  "failures": [],
+  "skipped": ["clean Windows ZIP without Node/Python"],
+  "newCoverage": [
+    "record budget same-batch duplicates",
+    "record budget cross-batch duplicates",
+    "record budget exact limit",
+    "page-level byte limit record_limit reason",
+    "collinfo invalid JSON/non-array",
+    "redirect to non-official endpoint rejected"
+  ],
+  "proxy": {
+    "http": "pass",
+    "httpAuth": "pass authorized=1",
+    "socks5": "pass",
+    "socks5Auth": "rejected before start (PROXY), zero origin/socks hits",
+    "failureNoDirect": "pass",
+    "loopbackDefaultBypass": "gap"
+  },
+  "build": {
+    "typecheck": "pass",
+    "build": "pass",
+    "localZipBytes": 153304703,
+    "localZipSha256": "5c284b91fa600e392001d48797bdc77dfd130870fed7e8595c9d954e7577534d",
+    "declaredDevZipSha256": "7676691eee0e56210ff0bede9432e0ac8d233c3178313230dd4e5395502356eb",
+    "zipHashMatchesDevClaim": false,
+    "unit": "72 passed",
+    "e2e": "29 passed"
+  },
+  "packaged": {
+    "verify": "PACKAGED_VERIFY_OK",
+    "independent": { "status": "完成", "rows": 3, "csvBytes": 210, "ok": true },
+    "doubleClickWaybackHits": 1,
+    "doubleClickOk": true
+  }
+}
