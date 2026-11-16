@@ -31,6 +31,7 @@ import { selectIndexes, resolveRange, type CcIndexMeta } from "../domain/time";
 import { normalizeTarget } from "../domain/target";
 import { toExportRow, type ArchiveRecord } from "../domain/record";
 import { AppError, errorFromUnknown, isTerminal } from "./errors";
+import { sanitizeContext, sanitizePublicText, sanitizeReason } from "./sanitize";
 import type { JobDeps, JobSession, RequestOptions } from "./ports";
 import { resolveBudgets, type JobBudgets } from "./budgets";
 
@@ -47,6 +48,8 @@ interface JobRuntime {
   terminal: boolean;
   controller: AbortController;
   session: JobSession;
+  successfulIndexes: number;
+  failedIndexes: number;
   lastError?: AppError;
 }
 
@@ -62,6 +65,7 @@ const REASON_LABELS: Record<string, string> = {
 };
 
 const BUSY_MESSAGE = "当前已有查询任务在运行，请等待完成或先停止。";
+const DIAGNOSTIC_TIMEOUT_MS = 500;
 
 function responseBudgetLimit(error: unknown): number | null {
   if (!(error instanceof AppError) || error.code !== "PARSE") return null;
@@ -169,6 +173,8 @@ export class JobManager {
         terminal: false,
         controller: new AbortController(),
         session,
+        successfulIndexes: 0,
+        failedIndexes: 0,
       };
       this.jobs.set(jobId, job);
       this.activeId = jobId;
@@ -272,7 +278,7 @@ export class JobManager {
         .join(" ");
       const count = reason.count ? ` ×${reason.count}` : "";
       const label = REASON_LABELS[reason.code] ?? reason.code;
-      return `${label}${where ? ` ${where}` : ""}${count}：${reason.message}`;
+      return sanitizePublicText(`${label}${where ? ` ${where}` : ""}${count}：${reason.message}`);
     });
     const sourceLabel = job.source === "wayback" ? "Wayback Machine" : "Common Crawl";
     const rangeLabel = job.config.selection.window
@@ -348,7 +354,7 @@ export class JobManager {
       pageSize: pageSize,
       pageCount,
       scope: this.scopeOf(job),
-      reasons: job.reasons.map((reason) => ({ ...reason })),
+      reasons: job.reasons.map((reason) => sanitizeReason(reason)),
       completion: job.completion,
       terminal: job.terminal,
     };
@@ -373,13 +379,15 @@ export class JobManager {
         job.completion = "partial";
       } else {
         job.lastError = errorFromUnknown(error, job.source);
-        job.reasons.push({
-          code: job.lastError.code === "TIMEOUT" ? "network" : "network",
-          message: job.lastError.message,
+        const reason: ReasonDto = {
+          code: "network",
+          message: await this.describeFailure(job, error),
           source: job.source,
           retryable: job.lastError.retryable,
-        });
-        this.emitReason(job, job.reasons[job.reasons.length - 1]);
+          context: { ...(job.lastError.context as Record<string, unknown> | undefined) },
+        };
+        job.reasons.push(reason);
+        this.emitReason(job, reason);
         job.completion = job.received > 0 ? "partial" : "unknown";
       }
     } finally {
@@ -410,12 +418,14 @@ export class JobManager {
           return;
         }
         if (job.received === 0) throw error;
+        const detail = await this.describeFailure(job, error);
         const reason: ReasonDto = {
           code: "network",
-          message: `第 ${page + 1} 页读取失败，已保留前面结果`,
+          message: `第 ${page + 1} 页读取失败，已保留前面结果：${detail}`,
           source: "wayback",
           page,
           retryable: true,
+          context: { ...(error instanceof AppError ? error.context : {}), stage: "wayback-page" },
         };
         this.addReason(job, reason);
         job.completion = "partial";
@@ -533,15 +543,20 @@ export class JobManager {
       }
       this.addReason(job, {
         code: "network",
-        message: `索引 ${index.id} 页数查询失败`,
+        message: `索引 ${index.id} 页数查询失败：${await this.describeFailure(job, error)}`,
         source: "commoncrawl",
         indexId: index.id,
         retryable: true,
+        context: { ...(error instanceof AppError ? error.context : {}), stage: "cc-page-count" },
       });
       job.completion = "partial";
+      job.failedIndexes += 1;
       return true;
     }
-    if (totalPages <= 0) return true;
+    if (totalPages <= 0) {
+      job.successfulIndexes += 1;
+      return true;
+    }
     const pagesToFetch = Math.min(totalPages, CC_BUDGET.maxPagesPerIndex);
     let pagesFetched = 0;
     let lastPageHadRecords = false;
@@ -563,17 +578,20 @@ export class JobManager {
             retryable: false,
           });
           job.completion = "partial";
+          job.failedIndexes += 1;
           return true;
         }
         this.addReason(job, {
           code: "network",
-          message: `索引 ${index.id} 第 ${page + 1} 页读取失败`,
+          message: `索引 ${index.id} 第 ${page + 1} 页读取失败：${await this.describeFailure(job, error)}`,
           source: "commoncrawl",
           indexId: index.id,
           page,
           retryable: true,
+          context: { ...(error instanceof AppError ? error.context : {}), stage: "cc-page" },
         });
         job.completion = "partial";
+        job.failedIndexes += 1;
         return true;
       }
       pagesFetched += 1;
@@ -584,7 +602,10 @@ export class JobManager {
       );
       for (const reason of result.reasons) this.addReason(job, reason);
       this.emitProgress(job, { indexId: index.id, page: page + 1, added: outcome.added });
-      if (outcome.truncated > 0) return false;
+      if (outcome.truncated > 0) {
+        job.successfulIndexes += 1;
+        return false;
+      }
       if (!lastPageHadRecords) break;
       if (page < pagesToFetch - 1) await this.wait(1_000, options.signal);
     }
@@ -599,7 +620,61 @@ export class JobManager {
       });
       job.completion = "partial";
     }
+    job.successfulIndexes += 1;
     return true;
+  }
+
+  private async describeFailure(job: JobRuntime, error: unknown): Promise<string> {
+    const failure = error instanceof AppError ? error : errorFromUnknown(error, job.source);
+    let text = sanitizePublicText(failure.message || "未知错误");
+    const context = failure.context as Record<string, unknown> | undefined;
+    const kind = String(context?.kind ?? "");
+    if (
+      ["proxy", "proxy-auth", "network", "timeout", "dns", "tls"].includes(kind) &&
+      this.deps.proxyAdvice
+    ) {
+      const advice = await this.diagnose(job);
+      if (advice) text = `${text}；${advice}`;
+    }
+    return sanitizePublicText(text);
+  }
+
+  /** Bounded, abort-aware diagnostics: never delays a terminal state indefinitely. */
+  private diagnose(job: JobRuntime): Promise<string | null> {
+    if (job.controller.signal.aborted) return Promise.resolve(null);
+    return new Promise((resolve) => {
+      let settled = false;
+      const finish = (value: string | null): void => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        job.controller.signal.removeEventListener("abort", onAbort);
+        resolve(value);
+      };
+      const timer = setTimeout(() => finish(null), DIAGNOSTIC_TIMEOUT_MS);
+      const onAbort = (): void => finish(null);
+      job.controller.signal.addEventListener("abort", onAbort, { once: true });
+      void (async () => {
+        let resolved: string | null = null;
+        try {
+          resolved = job.session.resolveProxy
+            ? await job.session.resolveProxy("https://index.commoncrawl.org")
+            : null;
+        } catch {
+          resolved = null;
+        }
+        if (settled || job.controller.signal.aborted) return null;
+        try {
+          return this.deps.proxyAdvice
+            ? await this.deps.proxyAdvice(job.config.proxy.mode, resolved)
+            : null;
+        } catch {
+          return null;
+        }
+      })()
+        .then((advice) => finish(advice ?? null))
+        .catch(() => finish(null));
+    });
   }
 
   private appendRecords(
@@ -655,15 +730,19 @@ export class JobManager {
     if (job.terminal) return;
     let status: JobStatus;
     let completion: "complete" | "partial" | "unknown";
-    const networkFailureWithoutData =
+    const networkWithoutData =
       job.received === 0 && job.reasons.some((reason) => reason.code === "network");
+    const ccAllIndexesFailed =
+      job.source === "commoncrawl" &&
+      job.received === 0 &&
+      job.successfulIndexes === 0 &&
+      (job.failedIndexes > 0 || networkWithoutData);
+    const waybackFailedWithoutData = job.source === "wayback" && networkWithoutData;
+    const fatalWithoutData = job.lastError !== undefined && job.received === 0;
     if (job.controller.signal.aborted) {
       status = "stopped";
       completion = job.received > 0 ? "partial" : "unknown";
-    } else if (networkFailureWithoutData) {
-      status = "failed";
-      completion = "unknown";
-    } else if (job.lastError && job.received === 0) {
+    } else if (ccAllIndexesFailed || waybackFailedWithoutData || fatalWithoutData) {
       status = "failed";
       completion = "unknown";
     } else if (job.completion === "partial" || job.reasons.length > 0) {
@@ -716,17 +795,18 @@ export class JobManager {
   }
 
   private addReason(job: JobRuntime, reason: ReasonDto): void {
-    const key = `${reason.code}|${reason.indexId ?? ""}|${reason.page ?? ""}`;
+    const safe = sanitizeReason(reason);
+    const key = `${safe.code}|${safe.indexId ?? ""}|${safe.page ?? ""}`;
     const existing = job.reasons.find(
       (item) => `${item.code}|${item.indexId ?? ""}|${item.page ?? ""}` === key,
     );
     if (existing) {
-      existing.count = (existing.count ?? 0) + (reason.count ?? 0);
-      if (reason.message) existing.message = reason.message;
+      existing.count = (existing.count ?? 0) + (safe.count ?? 0);
+      if (safe.message) existing.message = safe.message;
     } else {
-      job.reasons.push({ ...reason });
+      job.reasons.push(safe);
     }
-    this.emitReason(job, reason);
+    this.emitReason(job, safe);
   }
 
   private baseEvent(job: JobRuntime, kind: JobEventDto["kind"], payload: Record<string, unknown>): JobEventDto {
@@ -765,7 +845,7 @@ export class JobManager {
   }
 
   private emitReason(job: JobRuntime, reason: ReasonDto): void {
-    this.deps.emit(this.baseEvent(job, "reason", { reason: { ...reason } }));
+    this.deps.emit(this.baseEvent(job, "reason", { reason: sanitizeReason(reason) }));
   }
 }
 

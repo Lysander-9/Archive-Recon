@@ -35,6 +35,7 @@ function createTransport(
   isolated: Session,
   credentials: ProxyCredentials | null,
   maxResponseBytes: number,
+  proxyEndpoint: { hostname: string; port: string } | null,
 ): Transport {
   return (url, init) =>
     new Promise<HttpResponseLike>((resolve, reject) => {
@@ -44,6 +45,27 @@ function createTransport(
       }
       let settled = false;
       let blockedRedirect = false;
+      let blockedAuth = false;
+      let proxyChallengeSeen = false;
+      let authChallenges = 0;
+      const authFailure = (): AppError =>
+        new AppError(
+          "PROXY",
+          "代理认证失败（HTTP 407）：用户名或密码错误，本次任务已停止且不会直连",
+          {
+            retryable: false,
+            context: { stage: "proxy-auth", kind: "proxy-auth", httpStatus: 407 },
+          },
+        );
+      const authRequired = (): AppError =>
+        new AppError(
+          "PROXY",
+          "代理要求认证（HTTP 407）：请在代理地址中填写用户名/密码，本次任务不会直连",
+          {
+            retryable: false,
+            context: { stage: "proxy-auth", kind: "proxy-auth", httpStatus: 407 },
+          },
+        );
       const request = net.request({
         url,
         session: isolated,
@@ -86,20 +108,40 @@ function createTransport(
         });
       }
 
-      if (credentials) {
-        request.on("login", (authInfo, callback) => {
-          const matchesProxy =
-            authInfo?.isProxy === true &&
-            authInfo.host === credentials.hostname &&
-            String(authInfo.port) === credentials.port;
-          if (matchesProxy) {
-            callback(credentials.username, credentials.password);
-          } else {
-            // Never answer origin authentication or a different proxy challenge.
-            callback();
+      request.on("login", (authInfo, callback) => {
+        if (!authInfo?.isProxy) {
+          // Never answer origin authentication with proxy credentials.
+          callback();
+          return;
+        }
+        const matchesProxy = proxyEndpoint === null || (
+          authInfo.host === proxyEndpoint.hostname && String(authInfo.port) === proxyEndpoint.port
+        );
+        if (!matchesProxy) {
+          // A challenge from another proxy is not authentication evidence for this task.
+          callback();
+          return;
+        }
+        proxyChallengeSeen = true;
+        if (!credentials) {
+          callback();
+          try { request.abort(); } catch { /* already closed */ }
+          fail(authRequired());
+          return;
+        }
+        authChallenges += 1;
+        if (authChallenges > 2) {
+          blockedAuth = true;
+          try {
+            request.abort();
+          } catch {
+            // already aborted
           }
-        });
-      }
+          fail(authFailure());
+          return;
+        }
+        callback(credentials.username, credentials.password);
+      });
 
       request.on("response", (response) => {
         const chunks: Buffer[] = [];
@@ -143,12 +185,21 @@ function createTransport(
         response.on("error", fail);
       });
       request.on("error", (error) => {
+        if (blockedAuth) {
+          fail(authFailure());
+          return;
+        }
         if (blockedRedirect) {
           fail(
             new AppError("NETWORK", "重定向目标不在允许的官方端点内，已停止读取", {
               retryable: false,
             }),
           );
+          return;
+        }
+        const message = error instanceof Error ? error.message : String(error);
+        if (proxyChallengeSeen && /ERR_TOO_MANY_RETRIES|ERR_TUNNEL_CONNECTION_FAILED/i.test(message)) {
+          fail(credentials ? authFailure() : authRequired());
           return;
         }
         fail(error);
@@ -201,8 +252,9 @@ export function createElectronSessions(): ElectronSessionFactory {
       sessions.set(jobId, isolated);
       const maxResponseBytes = limits?.maxResponseBytes ?? DEFAULT_JOB_BUDGETS.maxResponseBytes;
       return {
-        transport: createTransport(isolated, credentials, maxResponseBytes),
+        transport: createTransport(isolated, credentials, maxResponseBytes, parsed),
         proxy: proxySnapshot(proxy),
+        resolveProxy: (url: string) => isolated.resolveProxy(url),
       };
     },
     async close(jobId: number): Promise<void> {

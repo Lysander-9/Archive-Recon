@@ -29,6 +29,8 @@ export interface RequestOptions {
   maxResponseBytes?: number;
   /** Optional per-hop redirect validator; false aborts the request. */
   validateRedirect?: (targetUrl: string) => boolean;
+  /** Test override for retry backoff; production uses 750/2000 ms. */
+  retryDelaysMs?: number[];
 }
 
 export interface JobLimits {
@@ -61,6 +63,8 @@ export interface WaybackPort {
 export interface JobSession {
   transport: Transport;
   proxy: ProxySnapshot;
+  /** Effective proxy resolution for this task session (not the default session). */
+  resolveProxy?: (url: string) => Promise<string>;
 }
 
 export interface SessionFactory {
@@ -75,6 +79,8 @@ export interface JobDeps {
   commoncrawl: CommonCrawlPort;
   sessions: SessionFactory;
   emit: (event: import("../contracts/types").JobEventDto) => void;
+  /** Optional diagnostic hint when a task network failure may be proxy-related. */
+  proxyAdvice?: (mode: string, resolved: string | null) => Promise<string | null>;
   budgets?: Partial<import("./budgets").JobBudgets>;
   source?: SourceId;
 }

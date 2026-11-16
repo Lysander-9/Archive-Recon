@@ -1,0 +1,20 @@
+{
+  "sha": "3bcabe4",
+  "command": "node acceptance/ui/run-ui-acceptance.mjs",
+  "ok": true,
+  "results": [
+    { "id": "nativeTheme", "ok": true, "darkBg": "rgb(14, 21, 35)", "lightBg": "rgb(244, 247, 251)" },
+    { "id": "small-window", "ok": true, "sizes": ["1202x680", "1040x620"] },
+    { "id": "highlight-filter-paging-sort", "ok": true, "interestingCount": 8 },
+    { "id": "source-freeze", "ok": true, "scope": "目标 example.com · 来源 Wayback Machine · 主机及子域 · 范围 全部时间 · 代理 直连" },
+    { "id": "partial-empty", "ok": true, "emptyText": "未取得可用记录 / 1 项未完成原因 / 查看原因" },
+    { "id": "copyReasons", "ok": true, "clipboardLength": 172 },
+    { "id": "stop-restart", "ok": true },
+    { "id": "rapid-filter", "ok": true, "summary": "匹配 0 / 去重 60 / 接收 61" }
+  ],
+  "notIndependentlyProven": [
+    "old getView generation deterministic trigger (dev E2E rapid paging covers)",
+    "real OS settings manual theme switch (nativeTheme.themeSource used)",
+    "physical 1366x768 / macOS / Linux"
+  ]
+}

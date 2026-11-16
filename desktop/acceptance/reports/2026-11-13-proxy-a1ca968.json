@@ -1,0 +1,73 @@
+{
+  "sha": "a1ca968ab15251968a14eaf7897d1c45bd220670",
+  "base": "5a548b3",
+  "sourceLocatedAt": "local worktree nept-3-c5d8bc2f4e21 / fix/cc-proxy (HEAD verified)",
+  "acceptanceSet": "original 108 + R10 supplement 8",
+  "tests": 116,
+  "pass": 114,
+  "fail": 1,
+  "skipped": 1,
+  "failures": [
+    {
+      "id": "R9-timeout-string",
+      "actual": "generic network",
+      "expectedByOriginalAssertion": "timeout text",
+      "note": "input is non-Chromium string; real ERR_TIMED_OUT passes R10; original R9 assertion retained"
+    }
+  ],
+  "r10Passed": [
+    "429/502/503/504 partial with companion index and httpStatus context",
+    "attempts <=3",
+    "real ERR_TIMED_OUT classification",
+    "real ERR_NAME_NOT_RESOLVED classification",
+    "all indexes failing -> failed with 504"
+  ],
+  "httpsProxy": {
+    "connect": "pass",
+    "connectAuth": "pass authorized=1",
+    "httpsTlsProxy": "pass",
+    "socks5": "pass",
+    "ccPageFlow": "pass metas=1 pages=1 records=2",
+    "proxyRefusedNoDirect": "pass",
+    "tls": "pass",
+    "status429_502_503_504": "pass, attempts=3",
+    "timeout": "pass",
+    "retryCancel": "pass",
+    "gzip": "pass",
+    "byteBudget": "pass",
+    "cancel": "pass",
+    "explicitDirectEnv": "pass contract",
+    "osSystemProxy": "resolveProxy PROXY 127.0.0.1:7890; external usability not verified",
+    "invalidProxyAuth": "FAIL: ERR_TOO_MANY_RETRIES, no 407/auth",
+    "officialHealth": "unresolved: product ERR_EMPTY_RESPONSE via test proxy; curl timeout via test proxy; direct curl earlier 200/35501"
+  },
+  "build": {
+    "typecheck": "pass",
+    "build": "pass",
+    "unit": "79 passed",
+    "e2e": "31 passed",
+    "independentUi": "8/8 pass"
+  },
+  "publicDeliverable": false,
+  "blockers": [
+    "invalid proxy auth diagnostic remains generic",
+    "original R9 timeout compatibility assertion still fails",
+    "OS proxy external usability unverified",
+    "test-proxy/curl layer incompatibility (localized, not product)",
+    "clean Windows ZIP skip",
+    "no package built/verified for this SHA"
+  ],
+  "r9Terminal": [
+    "429 single-index all fail -> failed (pass)",
+    "503 single-index all fail -> failed (pass)",
+    "R10 mixed success/fail -> partial (pass)"
+  ],
+  "resolveProxy": {
+    "defaultSession": "PROXY 127.0.0.1:7890",
+    "direct": "DIRECT",
+    "system": "PROXY 127.0.0.1:7890",
+    "fixed": "PROXY 127.0.0.1:18080",
+    "envPresent": false
+  },
+  "curlLocal": "FAIL at test proxy/curl layer: curl 000/0/8s while product local HTTPS succeeds"
+}

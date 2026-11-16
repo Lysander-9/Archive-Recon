@@ -37,6 +37,13 @@ async function prepare() {
     format: "cjs",
     external: ["electron"],
   });
+  await build({
+    ...common,
+    entryPoints: [path.join(HERE, "proxy", "run-https-proxy-acceptance.ts")],
+    outfile: path.join(PROXY_GENERATED, "run-https-proxy-acceptance.cjs"),
+    format: "cjs",
+    external: ["electron"],
+  });
 }
 
 prepare().catch((error) => {

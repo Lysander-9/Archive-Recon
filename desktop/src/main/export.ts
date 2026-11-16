@@ -8,6 +8,11 @@ import { AppError } from "../application/errors";
 
 export type ExportRow = Record<ExportField, string>;
 
+const SAFE_EXPORT_CODES = new Set([
+  "EACCES", "EPERM", "ENOENT", "ENOSPC", "EROFS", "EEXIST", "EISDIR",
+  "ENOTDIR", "EBUSY", "EMFILE", "ENFILE", "EXDEV", "EINVAL", "EIO",
+]);
+
 function escapeCsvField(value: string): string {
   if (/[",\r\n]/.test(value)) return `"${value.replace(/"/g, '""')}"`;
   return value;
@@ -49,8 +54,13 @@ export async function writeExport(
     } catch {
       // ignore cleanup failure
     }
-    const message = error instanceof Error ? error.message : String(error);
-    throw new AppError("EXPORT", `导出失败：${message}`);
+    // Filesystem text, paths and causes are untrusted diagnostic data. Publish
+    // only a fixed template and an exact known code, never promote raw text to
+    // a trusted AppError (including errors with throwing code accessors).
+    let code: unknown;
+    try { code = (error as { code?: unknown } | null)?.code; } catch { /* no safe code */ }
+    const safeCode = typeof code === "string" && SAFE_EXPORT_CODES.has(code) ? `（${code}）` : "";
+    throw new AppError("EXPORT", `导出失败${safeCode}，请检查保存位置、可用空间和写入权限后重试`);
   }
 }
 

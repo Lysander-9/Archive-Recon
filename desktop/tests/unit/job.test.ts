@@ -934,6 +934,300 @@ test.describe("job manager (T1/T2/T3)", () => {
     if (!stale.ok) expect(stale.error.code).toBe("STALE_VIEW");
   });
 
+  test("source failures keep HTTP status and stage", async () => {
+    const manager = new JobManager(
+      deps({
+        commoncrawl: {
+          fetchIndexes: async () => ({ metas: [indexMeta()], invalidCount: 0 }),
+          pageCount: async () => {
+            throw new AppError("NETWORK", "来源网关超时（HTTP 504）", {
+              context: { stage: "http", httpStatus: 504, attempts: 3, kind: "http" },
+            });
+          },
+          queryPage: async () => ({ records: [], hasMore: false, parseSkipped: 0, reasons: [] }),
+        },
+      }),
+    );
+    const started = await manager.start({
+      target: "example.com",
+      source: "commoncrawl",
+      range: { kind: "all" },
+      proxy: { mode: "direct" },
+    });
+    expect(started.ok).toBe(true);
+    if (!started.ok) return;
+    await until(() => viewOf(manager, started.value.jobId, "commoncrawl").terminal);
+
+    const view = viewOf(manager, started.value.jobId, "commoncrawl");
+    const reason = view.reasons.find((item) => item.code === "network");
+    expect(reason?.message).toContain("HTTP 504");
+    expect(reason?.message).toContain("页数查询失败");
+    expect(reason?.context?.httpStatus).toBe(504);
+    expect(reason?.context?.stage).toBe("cc-page-count");
+    // Every selected index failed and no usable rows exist: the task is failed,
+    // not partial (partial requires at least one successful index).
+    expect(view.status).toBe("failed");
+  });
+
+  test("direct network failure adds the available system proxy advice", async () => {
+    let seenResolved: string | null | undefined;
+    const manager = new JobManager(
+      deps({
+        proxyAdvice: async (_mode, resolved) => {
+          seenResolved = resolved;
+          return "系统代理可用（127.0.0.1:7890），本次任务使用直连";
+        },
+        sessions: {
+          create: async () => ({
+            transport: async () => ({ status: 200, text: async () => "[]", json: async () => [] }),
+            proxy: proxySnapshot({ mode: "direct" }),
+            resolveProxy: async () => "PROXY 127.0.0.1:7890",
+          }),
+          close: async () => undefined,
+        },
+        wayback: {
+          queryPage: async () => {
+            throw new AppError("NETWORK", "代理连接失败（net::ERR_TUNNEL_CONNECTION_FAILED）", {
+              retryable: true,
+              context: { stage: "transport", kind: "proxy", attempts: 1 },
+            });
+          },
+        },
+      }),
+    );
+    const started = await manager.start({
+      target: "example.com",
+      source: "wayback",
+      range: { kind: "all" },
+      proxy: { mode: "direct" },
+    });
+    expect(started.ok).toBe(true);
+    if (!started.ok) return;
+    await until(() => viewOf(manager, started.value.jobId).terminal);
+
+    const view = viewOf(manager, started.value.jobId);
+    const reason = view.reasons.find((item) => item.code === "network");
+    expect(reason?.message).toContain("代理连接失败");
+    expect(reason?.message).toContain("系统代理可用");
+    expect(reason?.context?.kind).toBe("proxy");
+    expect(seenResolved).toBe("PROXY 127.0.0.1:7890");
+  });
+
+  test("terminal status uses successful index count (empty success + failure is partial)", async () => {
+    const manager = new JobManager(
+      deps({
+        commoncrawl: {
+          fetchIndexes: async () => ({
+            metas: [indexMeta("CC-MAIN-OK"), indexMeta("CC-MAIN-FAIL")],
+            invalidCount: 0,
+          }),
+          pageCount: async (index) => {
+            if (index.id === "CC-MAIN-FAIL") {
+              throw new AppError("NETWORK", "来源服务不可用（HTTP 503）", {
+                context: { stage: "http", httpStatus: 503, kind: "http" },
+              });
+            }
+            return 0;
+          },
+          queryPage: async () => ({ records: [], hasMore: false, parseSkipped: 0, reasons: [] }),
+        },
+      }),
+    );
+    const started = await manager.start({
+      target: "example.com",
+      source: "commoncrawl",
+      range: { kind: "all" },
+      proxy: { mode: "direct" },
+    });
+    expect(started.ok).toBe(true);
+    if (!started.ok) return;
+    await until(() => viewOf(manager, started.value.jobId, "commoncrawl").terminal);
+
+    const view = viewOf(manager, started.value.jobId, "commoncrawl");
+    expect(view.status).toBe("partial");
+    expect(view.unique).toBe(0);
+    expect(view.reasons.some((item) => item.message.includes("503"))).toBe(true);
+  });
+
+  test("all indexes failing ends failed; a mixed success keeps records and partial", async () => {
+    let mode: "all-fail" | "mixed" = "all-fail";
+    const manager = new JobManager(
+      deps({
+        commoncrawl: {
+          fetchIndexes: async () => ({
+            metas: [indexMeta("CC-MAIN-A"), indexMeta("CC-MAIN-B")],
+            invalidCount: 0,
+          }),
+          pageCount: async (index) => {
+            if (mode === "all-fail" || index.id === "CC-MAIN-B") {
+              throw new AppError("NETWORK", "来源网关超时（HTTP 504）", {
+                context: { stage: "http", httpStatus: 504, kind: "http" },
+              });
+            }
+            return 1;
+          },
+          queryPage: async () => ({
+            records: mode === "mixed"
+              ? [rawRecord("https://example.com/a", { source: "commoncrawl" })]
+              : [],
+            hasMore: false,
+            parseSkipped: 0,
+            reasons: [],
+          }),
+        },
+      }),
+    );
+
+    const first = await manager.start({
+      target: "example.com",
+      source: "commoncrawl",
+      range: { kind: "all" },
+      proxy: { mode: "direct" },
+    });
+    expect(first.ok).toBe(true);
+    if (!first.ok) return;
+    await until(() => viewOf(manager, first.value.jobId, "commoncrawl").terminal);
+    const failedView = viewOf(manager, first.value.jobId, "commoncrawl");
+    expect(failedView.status).toBe("failed");
+    expect(failedView.unique).toBe(0);
+
+    mode = "mixed";
+    const second = await manager.start({
+      target: "example.com",
+      source: "commoncrawl",
+      range: { kind: "all" },
+      proxy: { mode: "direct" },
+    });
+    expect(second.ok).toBe(true);
+    if (!second.ok) return;
+    await until(() => viewOf(manager, second.value.jobId, "commoncrawl").terminal);
+    const partialView = viewOf(manager, second.value.jobId, "commoncrawl");
+    expect(partialView.status).toBe("partial");
+    expect(partialView.unique).toBe(1);
+  });
+
+  test("a zero-page successful index alone completes", async () => {
+    const manager = new JobManager(
+      deps({
+        commoncrawl: {
+          fetchIndexes: async () => ({ metas: [indexMeta("CC-MAIN-EMPTY")], invalidCount: 0 }),
+          pageCount: async () => 0,
+          queryPage: async () => ({ records: [], hasMore: false, parseSkipped: 0, reasons: [] }),
+        },
+      }),
+    );
+    const started = await manager.start({
+      target: "example.com",
+      source: "commoncrawl",
+      range: { kind: "all" },
+      proxy: { mode: "direct" },
+    });
+    expect(started.ok).toBe(true);
+    if (!started.ok) return;
+    await until(() => viewOf(manager, started.value.jobId, "commoncrawl").terminal);
+    expect(viewOf(manager, started.value.jobId, "commoncrawl").status).toBe("completed");
+  });
+
+  test("hanging diagnostics do not block cancel/terminal and public reasons are sanitized", async () => {
+    const environment = deps({
+      sessions: {
+        create: async () => ({
+          transport: async () => ({ status: 200, text: async () => "[]", json: async () => [] }),
+          proxy: proxySnapshot({ mode: "direct" }),
+          resolveProxy: () => new Promise<string>(() => undefined),
+        }),
+        close: async () => undefined,
+      },
+      proxyAdvice: () => new Promise<string | null>(() => undefined),
+      wayback: {
+        queryPage: async () => {
+          throw new AppError(
+            "NETWORK",
+            "来源返回 HTTP 400 password=supersecret token=abc123",
+            {
+              context: {
+                stage: "http",
+                httpStatus: 400,
+                kind: "http",
+                bodySnippet: '{"token":"abc123","password":"supersecret"}',
+              },
+            },
+          );
+        },
+      },
+    });
+    const manager = new JobManager(environment);
+    const started = await manager.start({
+      target: "example.com",
+      source: "wayback",
+      range: { kind: "all" },
+      proxy: { mode: "direct" },
+    });
+    expect(started.ok).toBe(true);
+    if (!started.ok) return;
+
+    const begun = Date.now();
+    await until(() => viewOf(manager, started.value.jobId).terminal, 3000);
+    expect(Date.now() - begun).toBeLessThan(1500);
+
+    const view = viewOf(manager, started.value.jobId);
+    const serialized = JSON.stringify(view.reasons);
+    expect(serialized).not.toContain("supersecret");
+    expect(serialized).not.toContain("abc123");
+    expect(serialized).not.toContain("bodySnippet");
+    expect(view.reasons[0]?.context?.httpStatus).toBe(400);
+
+    const copied = manager.copyReasons({
+      jobId: started.value.jobId,
+      source: "wayback",
+      revision: view.revision,
+    });
+    if (copied.ok) {
+      expect(copied.value.text).not.toContain("supersecret");
+      expect(copied.value.text).not.toContain("abc123");
+    }
+  });
+
+  test("cancel reaches stopped while diagnostics are still hanging", async () => {
+    const manager = new JobManager(
+      deps({
+        sessions: {
+          create: async () => ({
+            transport: async () => ({ status: 200, text: async () => "[]", json: async () => [] }),
+            proxy: proxySnapshot({ mode: "direct" }),
+            resolveProxy: () => new Promise<string>(() => undefined),
+          }),
+          close: async () => undefined,
+        },
+        proxyAdvice: () => new Promise<string | null>(() => undefined),
+        wayback: {
+          queryPage: async (_host, _page, _size, options) =>
+            new Promise((_resolve, reject) => {
+              options.signal.addEventListener(
+                "abort",
+                () => reject(Object.assign(new Error("aborted"), { name: "AbortError" })),
+                { once: true },
+              );
+            }),
+        },
+      }),
+    );
+    const started = await manager.start({
+      target: "example.com",
+      source: "wayback",
+      range: { kind: "all" },
+      proxy: { mode: "direct" },
+    });
+    expect(started.ok).toBe(true);
+    if (!started.ok) return;
+
+    const begun = Date.now();
+    manager.cancel({ jobId: started.value.jobId, source: "wayback" });
+    await until(() => viewOf(manager, started.value.jobId).terminal, 2000);
+    expect(Date.now() - begun).toBeLessThan(1000);
+    expect(viewOf(manager, started.value.jobId).status).toBe("stopped");
+  });
+
   test("reason summary copy is revision-checked and restricted to the job", () => {
     const environment = deps();
     const manager = new JobManager(environment);
@@ -970,10 +1264,10 @@ test.describe("job manager (T1/T2/T3)", () => {
   });
 });
 
-function indexMeta(): any {
+function indexMeta(id = "CC-MAIN-TEST"): any {
   return {
-    id: "CC-MAIN-TEST",
-    cdxApi: "https://index.commoncrawl.org/CC-MAIN-TEST-index",
+    id,
+    cdxApi: `https://index.commoncrawl.org/${id}-index`,
     fromMs: Date.UTC(2025, 7, 1),
     toMs: Date.UTC(2025, 9, 1),
     unknown: false,

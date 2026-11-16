@@ -279,3 +279,174 @@ test.describe("HTTP deadline", () => {
     ).rejects.toMatchObject({ code: "TIMEOUT" });
   });
 });
+
+test.describe("HTTP failure classification and bounded retry", () => {
+  test("retries a transient 504 once and succeeds", async () => {
+    const { transport, urls } = fakeTransport([
+      textResponse("gateway timeout", 504),
+      textResponse("ok", 200),
+    ]);
+
+    const response = await fetchText(transport, "https://index.commoncrawl.org/x", {
+      transport,
+      signal: new AbortController().signal,
+      timeoutMs: 2000,
+      retryDelaysMs: [1, 1],
+    });
+
+    expect(response.status).toBe(200);
+    expect(response.text).toBe("ok");
+    expect(urls).toHaveLength(2);
+  });
+
+  test("persistent 5xx surfaces the HTTP status and attempt count", async () => {
+    const { transport } = fakeTransport([textResponse("", 504)]);
+
+    await expect(
+      fetchText(transport, "https://index.commoncrawl.org/x", {
+        transport,
+        signal: new AbortController().signal,
+        timeoutMs: 2000,
+        retryDelaysMs: [1, 1],
+      }),
+    ).rejects.toMatchObject({
+      message: expect.stringContaining("HTTP 504"),
+      context: expect.objectContaining({ httpStatus: 504, attempts: 3 }),
+    });
+  });
+
+  test("retries 429 with backoff and reports rate limiting when persistent", async () => {
+    const { transport, urls } = fakeTransport([textResponse("rate limited", 429)]);
+    await expect(
+      fetchText(transport, "https://index.commoncrawl.org/x", {
+        transport,
+        signal: new AbortController().signal,
+        timeoutMs: 2000,
+        retryDelaysMs: [1, 1],
+      }),
+    ).rejects.toMatchObject({ message: expect.stringContaining("HTTP 429") });
+    expect(urls).toHaveLength(3);
+  });
+
+  test("classifies proxy, DNS and TLS transport errors", async () => {
+    const cases: Array<[string, string]> = [
+      ["net::ERR_TUNNEL_CONNECTION_FAILED", "代理连接失败"],
+      ["net::ERR_NAME_NOT_RESOLVED", "域名解析失败"],
+      ["net::ERR_CERT_AUTHORITY_INVALID", "TLS/证书校验失败"],
+    ];
+    for (const [message, expected] of cases) {
+      const { transport } = fakeTransport([new Error(message)]);
+      await expect(
+        fetchText(transport, "https://index.commoncrawl.org/x", {
+          transport,
+          signal: new AbortController().signal,
+          timeoutMs: 2000,
+          retryDelaysMs: [1, 1],
+        }),
+      ).rejects.toMatchObject({ message: expect.stringContaining(expected) });
+    }
+  });
+
+  test("retries a transient empty-response transport error once", async () => {
+    const { transport, urls } = fakeTransport([
+      new Error("net::ERR_EMPTY_RESPONSE"),
+      textResponse("ok", 200),
+    ]);
+    const response = await fetchText(transport, "https://index.commoncrawl.org/x", {
+      transport,
+      signal: new AbortController().signal,
+      timeoutMs: 2000,
+      retryDelaysMs: [1, 1],
+    });
+    expect(response.text).toBe("ok");
+    expect(urls).toHaveLength(2);
+  });
+
+  test("total deadline aborts backoff without calling the next attempt", async () => {
+    const { transport, urls } = fakeTransport([textResponse("gateway", 504)]);
+    const started = Date.now();
+    await expect(
+      fetchText(transport, "https://index.commoncrawl.org/x", {
+        transport,
+        signal: new AbortController().signal,
+        timeoutMs: 20,
+        retryDelaysMs: [750, 2000],
+      }),
+    ).rejects.toMatchObject({
+      code: "TIMEOUT",
+      context: expect.objectContaining({ attempts: 1 }),
+    });
+    expect(Date.now() - started).toBeLessThan(400);
+    expect(urls).toHaveLength(1);
+  });
+
+  test("cancelling during backoff stops without another transport call", async () => {
+    const { transport, urls } = fakeTransport([textResponse("gateway", 504)]);
+    const controller = new AbortController();
+    setTimeout(() => controller.abort(), 20);
+    await expect(
+      fetchText(transport, "https://index.commoncrawl.org/x", {
+        transport,
+        signal: controller.signal,
+        timeoutMs: 5000,
+        retryDelaysMs: [500, 500],
+      }),
+    ).rejects.toMatchObject({ code: "CLOSED" });
+    expect(urls).toHaveLength(1);
+  });
+
+  test("public error DTO strips credentials/body and keeps structured fields", () => {
+    const error = new AppError(
+      "NETWORK",
+      "来源返回 HTTP 400 password=supersecret token=abc123",
+      {
+        context: {
+          stage: "http",
+          httpStatus: 400,
+          netError: "net::ERR_BAD_REQUEST",
+          bodySnippet: '{"token":"abc123","password":"supersecret"}',
+        },
+      },
+    );
+
+    const serialized = JSON.stringify(error.toDto());
+
+    expect(serialized).not.toContain("supersecret");
+    expect(serialized).not.toContain("abc123");
+    expect(serialized).not.toContain("bodySnippet");
+    expect(error.toDto().context).toEqual(
+      expect.objectContaining({
+        stage: "http",
+        httpStatus: 400,
+        netError: "net::ERR_BAD_REQUEST",
+      }),
+    );
+  });
+
+  test("trusted timed-out text and typed auth errors are classified without retry", async () => {
+    const timedOut = fakeTransport([new Error("Request timed out after 30000ms")]);
+    await expect(
+      fetchText(timedOut.transport, "https://index.commoncrawl.org/x", {
+        transport: timedOut.transport,
+        signal: new AbortController().signal,
+        timeoutMs: 2000,
+        retryDelaysMs: [1, 1],
+      }),
+    ).rejects.toMatchObject({ message: expect.stringContaining("超时") });
+
+    const authError = new AppError("PROXY", "代理认证失败（HTTP 407）：用户名或密码错误", {
+      retryable: false,
+      context: { stage: "proxy-auth", kind: "proxy-auth", httpStatus: 407 },
+    });
+    const authTransport = fakeTransport([authError]);
+    await expect(
+      fetchText(authTransport.transport, "https://index.commoncrawl.org/x", {
+        transport: authTransport.transport,
+        signal: new AbortController().signal,
+        timeoutMs: 2000,
+        retryDelaysMs: [1, 1],
+      }),
+    ).rejects.toBe(authError);
+    expect(authTransport.urls).toHaveLength(1);
+  });
+});

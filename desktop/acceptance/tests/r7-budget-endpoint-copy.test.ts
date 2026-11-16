@@ -69,10 +69,14 @@ test("R7/budget: oversized response keeps earlier data and reports the byte limi
   const view = await harness.waitTerminal(started.value.jobId, "wayback");
   assert.equal(view.unique, 50);
   assert.equal(view.status, "partial");
-  // The manager currently reports the failed page generically; the contract
-  // requires a visible partial state and retention, which is asserted here.
-  // A byte-limit-specific message is a precision improvement, not a pass claim.
-  assert.ok(view.reasons.length > 0, "partial response must expose a reason");
+  assert.ok(
+    view.reasons.some((item: any) => item.code === "record_limit" && /第 2 页响应超过/.test(item.message)),
+    "page-level byte-limit reason missing",
+  );
+  assert.ok(
+    !view.reasons.some((item: any) => item.code === "network"),
+    "byte limit must not be reported as network",
+  );
 });
 
 const MALICIOUS_COLLINFO = JSON.stringify([

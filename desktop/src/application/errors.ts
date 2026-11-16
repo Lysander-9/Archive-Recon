@@ -1,7 +1,7 @@
 /** Application errors and terminal-state helpers. */
 
-import type { AppErrorDto, ErrorCode, JobStatus, SourceId } from "../contracts/types";
-import { TERMINAL_STATUSES } from "../contracts/types";
+import { sanitizeContext, sanitizePublicText } from "./sanitize";
+import { TERMINAL_STATUSES, type AppErrorDto, type ErrorCode, type JobStatus, type SourceId } from "../contracts/types";
 
 export class AppError extends Error {
   readonly code: ErrorCode;
@@ -14,7 +14,7 @@ export class AppError extends Error {
     retryable?: boolean;
     context?: Record<string, unknown>;
   } = {}) {
-    super(message);
+    super(sanitizePublicText(message));
     this.name = "AppError";
     this.code = code;
     this.source = options.source;
@@ -25,10 +25,10 @@ export class AppError extends Error {
   toDto(): AppErrorDto {
     return {
       code: this.code,
-      message: this.message,
+      message: sanitizePublicText(this.message),
       source: this.source,
       retryable: this.retryable,
-      context: this.context,
+      context: sanitizeContext(this.context),
     };
   }
 }
@@ -44,7 +44,10 @@ export function errorFromUnknown(error: unknown, source?: SourceId): AppError {
   }
   const message = error instanceof Error ? error.message : String(error);
   if (/timeout|timed out|AbortSignal\.timeout/i.test(message)) {
-    return new AppError("TIMEOUT", `请求超时：${message}`, { source, retryable: true });
+    return new AppError("TIMEOUT", "请求超时", { source, retryable: true, context: { kind: "timeout" } });
   }
-  return new AppError("NETWORK", `请求失败：${message}`, { source, retryable: true });
+  const code = /\bnet::ERR_[A-Z0-9_]+\b/i.exec(message)?.[0];
+  return new AppError("NETWORK", code ? `请求失败（${code}）` : "请求失败（未分类的错误）", {
+    source, retryable: false, context: code ? { netError: code } : undefined,
+  });
 }
